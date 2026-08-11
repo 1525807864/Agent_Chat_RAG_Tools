@@ -1,0 +1,48 @@
+# --- secrets / local env (never commit) ---
+.env
+.env.*
+!.env.example
+!**/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.envrc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- runtime data (local DBs, vectors, logs) ---
+data/*.db
+data/*.db-*
+data/app.log
+data/vector_store/
+data/knowledge_graph.json
+data/workspace/
+
+# --- frontend / Electron ---
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+frontend/*.tsbuildinfo
+frontend/node_modules/.tmp/

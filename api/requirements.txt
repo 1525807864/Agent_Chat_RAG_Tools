@@ -1,0 +1,8 @@
+# api/ 专用的最小 HTTP 依赖清单。
+# 业务运行仍需安装仓库根目录 requirements.txt（langchain、redis、chromadb 等）。
+# 安装示例（在项目根目录）:
+#   pip install -r requirements.txt
+#   pip install -r api/requirements.txt
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12

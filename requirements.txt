@@ -1,0 +1,48 @@
+# ===== 核心框架 =====
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-openai>=0.2.0
+langchain-chroma>=0.1.0
+openai>=1.50.0
+
+# ===== 向量数据库 & RAG =====
+chromadb>=0.5.0
+faiss-cpu>=1.9.0
+tiktoken>=0.7.0
+
+# ===== 文档加载与解析 =====
+pypdf>=5.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.3.0
+
+# ===== 知识图谱 =====
+networkx>=3.4.0
+# pygraphviz 在 Windows 上安装复杂，按需自行安装：pip install pygraphviz
+
+# ===== 缓存与持久化 =====
+redis>=5.2.0
+hiredis>=2.3.0
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+
+# ===== 结构化输出 =====
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# ===== 工具增强 =====
+httpx>=0.27.0
+tenacity>=9.0.0
+
+# ===== 环境与配置 =====
+python-dotenv>=1.0.0
+
+# ===== HTTP API =====
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
+
+# ===== 开发与测试 =====
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+pytest-mock>=3.14.0
