@@ -58,5 +58,6 @@ data/tenants/
 frontend/node_modules/
 frontend/dist/
 frontend/release/
+frontend/.vite/
 frontend/*.tsbuildinfo
 frontend/node_modules/.tmp/
