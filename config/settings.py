@@ -46,7 +46,7 @@ SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT",5))
 
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY","")
 #记忆配置
 MEMORY_WINDOW_SIZE = 10
 
@@ -72,7 +72,45 @@ class Settings(BaseSettings):
     model_max_tokens:int = Field(
         default=2048,
         ge=1,
-        le=128000,
+        le=1280000,
+    )
+    # ===== P0 鉴权 / 安全 =====
+    # 本地 Electron 调试建议 false；商用 / .env 设 AUTH_ENABLED=true
+    auth_enabled: bool = Field(
+        default=False,
+        alias="AUTH_ENABLED",
+        description="启用 JWT 鉴权；false 时接口放行匿名用户",
+    )
+    jwt_secret: str = Field(
+        default="change-me-to-long-random",
+        alias="JWT_SECRET",
+        description="JWT HMAC 密钥，生产必须换成长随机串",
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        alias="JWT_ALGORITHM",
+    )
+    jwt_expire_minutes: int = Field(
+        default=60 * 24,
+        alias="JWT_EXPIRE_MINUTES",
+        ge=1,
+    )
+    default_tenant_id: str = Field(
+        default="default",
+        alias="DEFAULT_TENANT_ID",
+    )
+    enable_execute_python: bool = Field(
+        default=False,
+        alias="ENABLE_EXECUTE_PYTHON",
+        description="是否注册 execute_python 工具",
+    )
+    embedding_api_base: str = Field(
+        default="https://api.openai.com/v1",
+        alias="EMBEDDING_API_BASE",
+    )
+    embedding_api_key: str = Field(
+        default="",
+        alias="EMBEDDING_API_KEY",
     )
     # 记忆配置
     memory_window_size: int = Field(
@@ -94,6 +132,28 @@ class Settings(BaseSettings):
     )
     sqlite_db_path: str = Field(
         default="data/chat_history.db",
+    )
+    # ===== 四子系统记忆 / Solip =====
+    memdir_path: str = Field(
+        default="data/memdir",
+        alias="MEMDIR_PATH",
+        description="Memdir 根目录（相对项目根或绝对路径）",
+    )
+    memory_solip_enabled: bool = Field(
+        default=True,
+        alias="MEMORY_SOLIP_ENABLED",
+    )
+    memory_solip_top_k: int = Field(
+        default=3,
+        ge=1,
+        le=8,
+        alias="MEMORY_SOLIP_TOP_K",
+    )
+    memory_relevance_top_k: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+        alias="MEMORY_RELEVANCE_TOP_K",
     )
     #RAG配置
     chunk_size:int = Field(
@@ -141,15 +201,27 @@ class Settings(BaseSettings):
         default="data/workspace",
     )
     #搜索配置
-    search_result_limit:int = Field(
+    tavily_api_key:str = Field(
+        default="",
+        alias="TAVILY_API_KEY",
+        description="Tavily Search API Key:空则web_search会提示未配置",
+    )
+    search_result_limit: int = Field(
         default=5,
         ge=1,
-        le=20
+        le=20,
+        alias="SEARCH_RESULT_LIMIT",
     )
-    search_timeout:int = Field(
+    search_timeout: int = Field(
         default=10,
         ge=1,
-        le=60
+        le=60,
+        alias="SEARCH_TIMEOUT",
+    )
+    # 部分网络/杀软会劫持 HTTPS，导致 Tavily 报 SSL EOF；可在 .env 设 SEARCH_SSL_VERIFY=false
+    search_ssl_verify: bool = Field(
+        default=True,
+        alias="SEARCH_SSL_VERIFY",
     )
     #代理配置
     max_agent_iterations:int = Field(

@@ -42,6 +42,8 @@ from api.schemas import HealthResponse
 from api.routes import chat as chat_routes
 from api.routes import sessions as sessions_routes
 from api.routes import knowledge as knowledge_routes
+from api.routes import auth_debug as auth_debug_routes
+from api.routes import billing as billing_routes
 
 
 @asynccontextmanager
@@ -104,9 +106,11 @@ app.add_middleware(
 )
 
 # 挂载各业务路由（prefix 已在各 router 内部定义，主要为 /api/...）
+app.include_router(auth_debug_routes.router)  # POST /api/auth/dev-token
 app.include_router(chat_routes.router)
 app.include_router(sessions_routes.router)
 app.include_router(knowledge_routes.router)
+app.include_router(billing_routes.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

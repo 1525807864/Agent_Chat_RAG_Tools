@@ -8,15 +8,16 @@
 
 ``create_default_registry(allowed_roots=..., project_root=...)`` 由应用层注入配置。
 """
-
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Sequence
 
+import httpx
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
+from config.settings import get_settings
 from shared.path_security import PathSecurityError, get_project_root, resolve_safe_path
 
 
@@ -24,6 +25,10 @@ from shared.path_security import PathSecurityError, get_project_root, resolve_sa
 
 class CalculatorInput(BaseModel):
     expression: str = Field(description="数学表达式, 如 '2 + 3 * 4'")
+
+
+class WebSearchInput(BaseModel):
+    query: str = Field(description="搜索关键词")
 
 
 @tool(args_schema=CalculatorInput)
@@ -37,16 +42,71 @@ def calculator(expression: str) -> str:
         return f"计算出错: {e}"
 
 
-class WebSearchInput(BaseModel):
-    query: str = Field(description="搜索关键词")
-
-
 @tool(args_schema=WebSearchInput)
 def web_search(query: str) -> str:
-    """搜索网页信息 (模拟)
-    生产环境应接入 SerpAPI / Tavily / Bing 等真实搜索 API
-    """
-    return f"[模拟搜索] 关于 '{query}' 的搜索结果: ..."
+    """使用 Tavily 搜索网页，返回标题、链接与摘要，供回答事实类问题。"""
+    settings = get_settings()
+    api_key = (settings.tavily_api_key or "").strip()
+    if not api_key:
+        return "搜索失败：未配置 TAVILY_API_KEY，请在 .env 中设置后重启后端。"
+
+    q = (query or "").strip()
+    if not q:
+        return "搜索失败：关键词不能为空"
+
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": api_key,
+        "query": q,
+        "max_results": settings.search_result_limit,
+        "search_depth": "basic",
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+
+    try:
+        # 部分环境证书链/杀软中间人会导致 UNEXPECTED_EOF；可用 SEARCH_SSL_VERIFY=false
+        with httpx.Client(
+            timeout=settings.search_timeout,
+            verify=settings.search_ssl_verify,
+        ) as client:
+            resp = client.post(url, json=payload)
+    except httpx.TimeoutException:
+        return f"搜索超时（>{settings.search_timeout}s）：{q}"
+    except httpx.HTTPError as e:
+        hint = ""
+        if "SSL" in str(e).upper() or "CERTIFICATE" in str(e).upper():
+            hint = "（可在 .env 设置 SEARCH_SSL_VERIFY=false 后重试）"
+        return f"搜索网络错误：{e}{hint}"
+
+    if resp.status_code != 200:
+        detail = resp.text[:500]
+        return f"搜索失败 HTTP {resp.status_code}: {detail}"
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return f"搜索失败：解析响应失败: {e}"
+
+    results = data.get("results") or []
+    if not results:
+        return f"未找到与「{q}」相关的网页"
+
+    lines: list[str] = [f"搜索词: {q}", f"共 {len(results)} 条结果:", ""]
+    for i, item in enumerate(results, 1):
+        title = (item.get("title") or "（无标题）").strip()
+        link = (item.get("url") or "").strip()
+        snippet = (item.get("content") or item.get("snippet") or "").strip()
+        if len(snippet) > 400:
+            snippet = snippet[:400] + "…"
+        lines.append(f"{i}. {title}")
+        if link:
+            lines.append(f"   链接: {link}")
+        if snippet:
+            lines.append(f"   摘要: {snippet}")
+        lines.append("")
+
+    return "\n".join(lines).strip()
 
 
 class FileReadInput(BaseModel):
@@ -278,6 +338,8 @@ def make_workspace_tools(workspace_root: str | Path) -> list[BaseTool]:
 def create_default_registry(
     allowed_roots: Sequence[str | Path] | None = None,
     project_root: Path | str | None = None,
+    *,
+    enable_execute_python: bool = False, #默认关闭
 ) -> ToolRegistry:
     """创建预注册常用工具的注册中心。
 
@@ -297,5 +359,6 @@ def create_default_registry(
     registry.register(calculator)
     registry.register(web_search)
     registry.register(make_read_file_tool(roots, project_root=base))
-    registry.register(execute_python)
+    if enable_execute_python:
+        registry.register(execute_python)
     return registry

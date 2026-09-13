@@ -22,6 +22,10 @@ function llmFields(llm?: LlmSettings): Partial<LlmSettings> {
   return out;
 }
 
+function emptyAnswerFallback() {
+  return "（空响应）模型未返回内容，请重试或检查 API Key / 模型设置";
+}
+
 export function useChat(llmSettings?: LlmSettings) {
   const [sessionId, setSessionId] = useState(() => `web-${uid()}`);
   const [messages, setMessages] = useState<UiMessage[]>([]);
@@ -87,15 +91,21 @@ export function useChat(llmSettings?: LlmSettings) {
       try {
         if (!useStream) {
           const res = await postChat(body);
+          const text =
+            typeof res.answer === "string" && res.answer.trim()
+              ? res.answer
+              : emptyAnswerFallback();
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId ? { ...m, content: res.answer } : m,
+              m.id === assistantId ? { ...m, content: text } : m,
             ),
           );
         } else {
           const ac = new AbortController();
           abortRef.current = ac;
           let acc = "";
+          let sawDone = false;
+          let sawError = false;
           await postChatStream(
             body,
             {
@@ -109,17 +119,39 @@ export function useChat(llmSettings?: LlmSettings) {
                 );
               },
               onDone: (answer) => {
-                const finalText = answer || acc;
+                sawDone = true;
+                const merged = (answer || acc).trim() ? answer || acc : "";
+                const finalText = merged || emptyAnswerFallback();
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantId ? { ...m, content: finalText } : m,
                   ),
                 );
               },
-              onError: (detail) => setError(detail),
+              onError: (detail) => {
+                sawError = true;
+                setError(detail);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, content: m.content || `（请求失败）${detail}` }
+                      : m,
+                  ),
+                );
+              },
             },
             ac.signal,
           );
+          if (!sawDone && !sawError) {
+            const finalText = acc.trim() ? acc : emptyAnswerFallback();
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: m.content || finalText }
+                  : m,
+              ),
+            );
+          }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

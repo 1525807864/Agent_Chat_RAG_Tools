@@ -79,7 +79,16 @@ class MultiAgentOrchestrator:
 
         for i, agent_name in enumerate(agent_names):
             agent = self.get_agent(agent_name)
-            step_task = task if i == 0 else f"基于前面的分析, 继续处理: {task}"
+            if i == 0:
+                step_task = task
+            else:
+                prev = final_result or ""
+                step_task = (
+                    f"用户原任务: {task}\n\n"
+                    f"上一 Agent 的结果（可能含 web_search 内容，请采信其中的链接与摘要）:\n"
+                    f"{prev}\n\n"
+                    f"请基于以上结果继续处理，不要声称无法联网。"
+                )
             log.append(f"[步骤{i+1}] {agent_name}({agent.role}) 开始处理...")
 
             try:
@@ -96,6 +105,10 @@ class MultiAgentOrchestrator:
                     agent_outputs=outputs, execution_log=log,
                     total_time_ms=(time.time() - start) * 1000,
                 )
+
+        # 若最后一环结果空洞，回退到 researcher（常有搜索结果）
+        if (not (final_result or "").strip()) and "researcher" in outputs:
+            final_result = outputs["researcher"].get("result", "") or final_result
 
         return OrchestratorResult(
             success=True, final_answer=final_result,

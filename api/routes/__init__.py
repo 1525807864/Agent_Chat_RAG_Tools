@@ -4,6 +4,7 @@
 
 模块一览
 ========
+- ``auth_debug``：``POST /api/auth/dev-token``（调试签发 JWT）
 - ``chat``      ：``POST /api/chat``、``POST /api/chat/stream``（对话与 SSE 占位流）
 - ``sessions``  ：会话列表 / 历史查询 / 删除
 - ``knowledge`` ：知识库构建、知识图谱统计

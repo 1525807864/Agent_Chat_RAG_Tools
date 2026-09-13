@@ -132,20 +132,29 @@ export async function postChatStream(
       // 流开始
       handlers.onStart?.(payload as { session_id: string; mode: string });
     } else if (eventName === "message") {
-      // 增量消息
-      const d = payload as { delta?: string };
-      // 有 delta 才回调
-      if (d.delta) handlers.onDelta?.(d.delta);
+      // 增量消息：只接受字符串 delta（避免 null/对象导致空气泡）
+      const d = payload as { delta?: unknown };
+      if (typeof d.delta === "string" && d.delta.length > 0) {
+        handlers.onDelta?.(d.delta);
+      }
     } else if (eventName === "done") {
-      // 结束帧
-      const d = payload as { answer?: string; delta?: string };
-      // 优先 answer，否则 delta，再否则空串
-      handlers.onDone?.(d.answer ?? d.delta ?? "");
+      // 结束帧：统一收成 string
+      const d = payload as { answer?: unknown; delta?: unknown };
+      const answer =
+        typeof d.answer === "string"
+          ? d.answer
+          : typeof d.delta === "string"
+            ? d.delta
+            : "";
+      handlers.onDone?.(answer);
     } else if (eventName === "error") {
       // 业务错误帧
-      const d = payload as { detail?: string };
-      // 回调错误详情
-      handlers.onError?.(d.detail || "未知流式错误");
+      const d = payload as { detail?: unknown };
+      const detail =
+        typeof d.detail === "string" && d.detail
+          ? d.detail
+          : "未知流式错误";
+      handlers.onError?.(detail);
     }
     // 重置事件名为默认
     eventName = "message";

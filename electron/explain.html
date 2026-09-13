@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
+    />
+    <title>划词分析</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8fa;
+        --panel: #fff;
+        --text: #1a1f36;
+        --muted: #5c6b7a;
+        --border: #e3e8ef;
+        --accent: #0f6e56;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        -webkit-app-region: drag; /* 可拖动窗口 */
+      }
+      header h1 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      header button {
+        -webkit-app-region: no-drag;
+        border: 1px solid var(--border);
+        background: #fff;
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      main { padding: 12px; display: grid; gap: 10px; }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .label {
+        font-size: 11px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      pre, .answer {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.5;
+        max-height: 160px;
+        overflow: auto;
+      }
+      .answer { max-height: 280px; }
+      .status {
+        color: var(--accent);
+        font-size: 12px;
+      }
+      .error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>划词分析</h1>
+      <button id="btn-close" type="button">关闭</button>
+    </header>
+    <main>
+      <div id="status" class="status">等待快捷键…（Ctrl+Shift+A）</div>
+      <section>
+        <div class="label">选中内容</div>
+        <pre id="selected">（无）</pre>
+      </section>
+      <section>
+        <div class="label">分析结果</div>
+        <div id="answer" class="answer">（尚未分析）</div>
+      </section>
+    </main>
+    <script>
+      const elStatus = document.getElementById("status");
+      const elSelected = document.getElementById("selected");
+      const elAnswer = document.getElementById("answer");
+
+      document.getElementById("btn-close").onclick = () => {
+        window.explainAPI?.close();
+      };
+
+      window.explainAPI?.onUpdate((payload) => {
+        const { phase, selected, answer, detail } = payload || {};
+        if (typeof selected === "string") {
+          elSelected.textContent = selected || "（空）";
+        }
+        if (phase === "loading") {
+          elStatus.className = "status";
+          elStatus.textContent = "正在分析…";
+          elAnswer.textContent = "请稍候";
+        } else if (phase === "done") {
+          elStatus.className = "status";
+          elStatus.textContent = "完成";
+          elAnswer.textContent = answer || "（无内容）";
+        } else if (phase === "error") {
+          elStatus.className = "status error";
+          elStatus.textContent = "失败";
+          elAnswer.textContent = detail || "未知错误";
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -25,11 +26,12 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from agents.orchestrator import MultiAgentOrchestrator
-from agents.react_agent import ReActAgent
+from agents.react_agent import RESEARCHER_SYSTEM_PROMPT, ReActAgent
 from agents.tools_registry import create_default_registry, make_workspace_tools
 from application.security_policy import SecurityPolicy
 from config.settings import get_settings
-from memory.history_compressor import HistoryCompressor
+from infrastructure.llm.deepseek import DeepSeekChatModel
+from memory.facade import MemoryFacade
 from memory.session_store import create_session_store
 from rag.document_loader import DocumentLoader
 from rag.knowledge_graph import GraphRAGRetriever, KnowledgeGraph
@@ -37,16 +39,9 @@ from rag.rag_chain import create_graph_rag_chain, create_rag_chain
 from rag.vector_store import VectorStoreManager
 from safety.content_filter import ContentFilter
 from safety.rate_limiter import AsyncRateLimiter
-from safety.retry_handler import CircuitBreaker
 from shared.errors import AppError, ErrorCode, sanitize_exception_message
 from shared.path_security import PathSecurityError, get_project_root, resolve_safe_path
 from utils.logger import setup_logger
-
-# 优先使用 infrastructure 中的 ChatModel；兼容旧 llm_deepseek 导入路径
-try:
-    from infrastructure.llm.deepseek import DeepSeekChatModel
-except ImportError:  # pragma: no cover
-    from llm_deepseek import DeepSeekChatModel
 
 
 class AgentApplication:
@@ -67,12 +62,7 @@ class AgentApplication:
         )
 
         self.session_store = None
-        self._session_summaries: dict[str, str] = {}
-
-        self.history_compressor = HistoryCompressor(
-            llm=self.llm,
-            window_size=self.settings.memory_window_size,
-        )
+        self.memory: MemoryFacade | None = None
 
         self.vector_store = VectorStoreManager(
             embedding_model=self.settings.embedding_model,
@@ -94,7 +84,12 @@ class AgentApplication:
         self.tool_registry = create_default_registry(
             allowed_roots=self.settings.allowed_data_roots,
             project_root=self.project_root,
+            enable_execute_python=self.settings.enable_execute_python,
         )
+
+        # 租户级向量库缓存（P1）
+        self._tenant_vector_stores: dict[str, VectorStoreManager] = {}
+        self._tenant_graphs: dict[str, KnowledgeGraph] = {}
 
         self.orchestrator = MultiAgentOrchestrator(
             max_rounds=self.settings.max_agent_iterations,
@@ -108,7 +103,9 @@ class AgentApplication:
             blocked_keywords=self.settings.blocked_keywords,
         )
         self.security = SecurityPolicy(self.content_filter, self.rate_limiter)
-        self.circuit_breaker = CircuitBreaker(failure_threshold=5)
+
+        # Skills：懒加载缓存（/explain 等 slash 命令）；见 _ensure_skills / ask_chat
+        self._skills = None
 
         self.doc_loader = DocumentLoader(
             chunk_size=self.settings.chunk_size,
@@ -126,11 +123,12 @@ class AgentApplication:
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
+        temperature: float | None = None,
     ) -> DeepSeekChatModel:
         """根据「本轮请求」解析出要使用的 ChatModel。
 
         优先级（从高到低）：
-        1. 本次参数（前端 Settings 传来的）
+        1. 本次参数（前端 Settings / Skill frontmatter 传来的）
         2. Settings / .env 里的默认值
 
         为什么每次可能 new 一个模型对象？
@@ -143,6 +141,11 @@ class AgentApplication:
         key = (api_key or "").strip() or (self.settings.deepseek_api_key or "").strip()
         base = (api_base or "").strip() or (self.settings.deepseek_api_base or "").strip()
         model = (model_name or "").strip() or (self.settings.model_name or "").strip()
+        temp = (
+            self.settings.model_temperature
+            if temperature is None
+            else float(temperature)
+        )
 
         if not key:
             # 用 AppError，接口层映射成 HTTP 状态码，前端能直接展示这句话
@@ -162,11 +165,104 @@ class AgentApplication:
 
         return DeepSeekChatModel(
             model_name=model,
-            temperature=self.settings.model_temperature,
+            temperature=temp,
             max_tokens=self.settings.model_max_tokens,
             api_key=key,
             api_base=base,
         )
+
+    async def _ensure_skills(self):
+        """懒加载项目内 Skills（data/skills + .claude/skills），并缓存到 self._skills。
+
+        刻意不扫描 ~/.claude/skills，避免把本机 Claude Code 教学技能混进本 Demo。
+        """
+        if self._skills is not None:
+            return self._skills
+
+        from pathlib import Path
+
+        from skills.load_skills import discover_skills
+
+        demo_dir = self.project_root / "data" / "skills"
+        project_claude = self.project_root / ".claude" / "skills"
+        project_dirs = [project_claude] if project_claude.is_dir() else []
+
+        self._skills = await discover_skills(
+            cwd=str(self.project_root),
+            # 用空目录覆盖 user/policy，只保留项目内技能
+            user_skills_dir=Path("__skills_user_disabled__"),
+            policy_skills_dir=Path("__skills_policy_disabled__"),
+            project_skills_dirs=project_dirs,
+            demo_skills_dir=demo_dir if demo_dir.is_dir() else None,
+            logger=lambda m: self.logger.info("[skills] %s", m),
+            enable_shell=False,
+        )
+        self.logger.info(
+            "Skills 已加载: %s",
+            [c.name for c in self._skills] if self._skills else [],
+        )
+        return self._skills
+
+    async def _resolve_skill_for_turn(
+        self,
+        user_input: str,
+        session_id: str,
+        *,
+        active_file: str | None = None,
+    ) -> tuple[str, str, str, object | None, float | None, str | None]:
+        """解析本轮是否触发 slash Skill。
+
+        返回:
+            (effective_input, skill_system_extra, memory_session_id,
+             resolved_or_none, temperature_override, model_override)
+
+        未命中时 effective_input==user_input，skill_system_extra==""。
+        """
+        from skills.integrate_hooks import build_runtime_plan, resolve_and_build_skill_prefix
+        from skills.types import MalformedCommandError
+
+        skills = await self._ensure_skills()
+        try:
+            prefix, effective_q, resolved = await resolve_and_build_skill_prefix(
+                user_input,
+                skills,
+                cwd=str(self.project_root),
+                session_id=session_id,
+                active_file=active_file,
+            )
+        except MalformedCommandError as e:
+            # 权限拒绝等：冒泡成可读错误，由 ask_* 直接返回
+            raise AppError(
+                ErrorCode.VALIDATION,
+                f"技能执行失败: {e}",
+                http_status=400,
+            ) from e
+
+        if resolved is None:
+            return user_input, "", session_id, None, None, None
+
+        plan = build_runtime_plan(resolved.command, base_session_id=session_id)
+        skill_extra = ""
+        if prefix.strip():
+            skill_extra = (
+                f"\n\n# Active Skill: /{resolved.command.name}\n"
+                f"请严格遵循下列技能说明完成用户请求：\n\n{prefix.strip()}\n"
+            )
+        self.logger.info(
+            "Skill 激活: /%s args=%s session=%s",
+            resolved.command.name,
+            resolved.args,
+            plan.session_id,
+        )
+        return (
+            effective_q,
+            skill_extra,
+            plan.session_id,
+            resolved,
+            plan.temperature,
+            plan.model_name,
+        )
+
 
     def _register_default_agents(self) -> None:
         """一次性注册多 Agent 角色，避免每次 ask_multi_agent 重复覆盖。"""
@@ -179,6 +275,8 @@ class AgentApplication:
                 role="信息研究员",
                 llm=self.llm,
                 tools=[t for t in [web] if t],
+                system_prompt=RESEARCHER_SYSTEM_PROMPT,
+                max_tool_calls=6,
             )
         )
         self.orchestrator.register_agent(
@@ -198,6 +296,54 @@ class AgentApplication:
             )
         )
 
+    def _vector_store_for_tenant(self, tenant_id: str) -> VectorStoreManager:
+        """按租户返回（并缓存）向量库管理器。"""
+        from application.tenancy import sanitize_tenant_id, tenant_vector_dir
+
+        tid = sanitize_tenant_id(tenant_id)
+        if tid not in self._tenant_vector_stores:
+            persist = tenant_vector_dir(self.project_root, tid)
+            self._tenant_vector_stores[tid] = VectorStoreManager(
+                embedding_model=self.settings.embedding_model,
+                persist_dir=str(persist),
+            )
+        return self._tenant_vector_stores[tid]
+
+    def _graph_for_tenant(self, tenant_id: str) -> KnowledgeGraph:
+        """按租户返回（并缓存）知识图谱。"""
+        from application.tenancy import sanitize_tenant_id, tenant_graph_path
+
+        tid = sanitize_tenant_id(tenant_id)
+        if tid not in self._tenant_graphs:
+            path = tenant_graph_path(self.project_root, tid)
+            self._tenant_graphs[tid] = KnowledgeGraph(
+                persist_path=str(path),
+                auto_load=True,
+            )
+        return self._tenant_graphs[tid]
+
+    @staticmethod
+    def _docs_to_sources(docs: list) -> list[dict]:
+        sources: list[dict] = []
+        for d in docs:
+            meta = dict(getattr(d, "metadata", None) or {})
+            content = getattr(d, "page_content", "") or ""
+            sources.append(
+                {
+                    "doc_id": str(
+                        meta.get("source")
+                        or meta.get("file_path")
+                        or meta.get("filename")
+                        or "unknown"
+                    ),
+                    "snippet": content[:300],
+                    "score": meta.get("score"),
+                    "page": meta.get("page"),
+                    "metadata": meta,
+                }
+            )
+        return sources
+
     async def init_session_store(self) -> None:
         """按 Settings.memory_backend 创建会话存储。"""
         backend = self.settings.memory_backend
@@ -209,9 +355,24 @@ class AgentApplication:
             kwargs["db_path"] = self.settings.sqlite_db_path
         self.session_store = await create_session_store(backend=backend, **kwargs)
 
+        mem_root = Path(self.settings.memdir_path)
+        if not mem_root.is_absolute():
+            mem_root = (self.project_root / mem_root).resolve()
+
+        self.memory = MemoryFacade(
+            session_store=self.session_store,
+            llm=self.llm,
+            project_root=self.project_root,
+            window_size=self.settings.memory_window_size,
+            solip_enabled=self.settings.memory_solip_enabled,
+            solip_top_k=self.settings.memory_solip_top_k,
+            relevance_top_k=self.settings.memory_relevance_top_k,
+            memdir_root=mem_root,
+        )
+
     # ===== 知识库构建 =====
-    def build_knowledge_base(self, doc_dir: str) -> int:
-        """从本地目录构建向量库，并抽取三元组写入图谱（自动落盘）。
+    def build_knowledge_base(self, doc_dir: str, tenant_id: str = "default") -> int:
+        """从本地目录构建**租户**向量库，并抽取三元组写入租户图谱。
 
         ``doc_dir`` 必须落在 ``allowed_data_roots`` 内。
         """
@@ -231,28 +392,44 @@ class AgentApplication:
                 internal=str(e),
             ) from e
 
-        self.logger.info("开始构建知识库: %s", safe_dir)
+        store = self._vector_store_for_tenant(tenant_id)
+        graph = self._graph_for_tenant(tenant_id)
+
+        self.logger.info("开始构建知识库: tenant=%s dir=%s", tenant_id, safe_dir)
         docs = self.doc_loader.load_directory(safe_dir)
         if not docs:
             self.logger.warning("未找到任何文档")
             return 0
 
-        count = self.vector_store.add_documents(docs)
-        self.logger.info("知识库构建完成, 共 %s 个文档片段", count)
+        count = store.add_documents(docs)
+        self.logger.info("知识库构建完成, tenant=%s chunks=%s", tenant_id, count)
 
         max_chars = self.settings.graph_extract_max_chars
         for doc in docs:
-            self.knowledge_graph.extract_triples_with_llm(
+            graph.extract_triples_with_llm(
                 doc.page_content[:max_chars],
                 self.llm,
                 persist=False,
             )
-        # 批量抽取后统一落盘，降低 IO
         try:
-            self.knowledge_graph.save()
+            graph.save()
         except Exception as e:
             self.logger.warning("图谱落盘失败: %s", e)
         return count
+
+    def list_tenant_docs(self, tenant_id: str = "default") -> list[dict]:
+        """列出租户 docs 目录下的文件。"""
+        from application.tenancy import tenant_docs_dir
+
+        root = tenant_docs_dir(self.project_root, tenant_id)
+        if not root.is_dir():
+            return []
+        out: list[dict] = []
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                rel = str(p.relative_to(root)).replace("\\", "/")
+                out.append({"name": p.name, "size": p.stat().st_size, "path": rel})
+        return out
 
     # ===== 聊天 =====
     async def ask_chat(
@@ -263,130 +440,251 @@ class AgentApplication:
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
+        active_file: str | None = None,
+        files: list | None = None,
     ) -> str:
-        """带会话历史的普通对话（接入安全策略 + 可选历史压缩）。
+        """带会话历史的普通对话（四子系统 MemoryFacade + Solip + Skills）。
 
         api_key / api_base / model_name 为本轮可选覆盖；不传则用 .env。
+        active_file：当前打开文件路径（相对或绝对），供条件技能参考。
+        files：打开文件内容，在 Skill 解析之后再拼进提问（避免破坏 /skill 匹配）。
+
+        若用户输入以 ``/skill-name`` 开头，会注入对应 SKILL.md 正文到 system。
         """
         blocked = await self.security.guard(user_input, rate_limit=True)
         if blocked:
             return blocked
 
-        # 本轮专用模型（请求级优先，避免污染单例 self.llm）
-        llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
+        if not active_file and files:
+            first = files[0]
+            if isinstance(first, dict):
+                active_file = first.get("path")
+            else:
+                active_file = getattr(first, "path", None)
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "你是一个优秀的AI助手, 请简洁准确地回答用户问题。\n{summary_block}"),
-            MessagesPlaceholder(variable_name="history"),
-            ("human", "{input}"),
-        ])
-        chain = prompt | llm | StrOutputParser()
-
-        history: list = []
-        summary_block = ""
-        if self.session_store:
-            raw = await self.session_store.get_recent_messages(
-                session_id, n=self.settings.memory_window_size
+        # ---- Skills：解析 /explain 等 slash 命令（必须用原始 user_input）----
+        memory_session_id = session_id
+        effective_input = user_input
+        skill_extra = ""
+        skill_temp: float | None = None
+        skill_model: str | None = None
+        try:
+            (
+                effective_input,
+                skill_extra,
+                memory_session_id,
+                _resolved,
+                skill_temp,
+                skill_model,
+            ) = await self._resolve_skill_for_turn(
+                user_input,
+                session_id,
+                active_file=active_file,
             )
-            # 长会话：触发摘要压缩，摘要放入 system，窗口消息仍进 history
-            if self.history_compressor.should_compress(raw):
-                try:
-                    recent, new_summary = await self.history_compressor.compress(
-                        raw,
-                        existing_summmary=self._session_summaries.get(session_id, ""),
-                    )
-                    self._session_summaries[session_id] = new_summary
-                    raw = recent
-                    if new_summary:
-                        summary_block = f"【历史摘要】{new_summary}"
-                except Exception as e:
-                    self.logger.warning("历史压缩失败，回退滑动窗口: %s", e)
+        except AppError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            # 技能子系统故障不阻断普通对话
+            self.logger.warning("Skills 解析失败，回退普通对话: %s", e)
 
-            for msg in raw:
-                if msg["role"] == "user":
-                    history.append(HumanMessage(content=msg["content"]))
-                elif msg["role"] == "assistant":
-                    history.append(AIMessage(content=msg["content"]))
+        # Skill 展开后再拼打开文件，避免 files 前缀挡住 /^\/skill/
+        files_prefix = self._build_files_prefix(files)
+        llm_input = (
+            files_prefix + "用户请求：\n" + effective_input
+            if files_prefix
+            else effective_input
+        )
+
+        llm = self._resolve_llm(
+            api_key=api_key,
+            api_base=api_base,
+            model_name=skill_model or model_name,
+            temperature=skill_temp,
+        )
 
         try:
+            if self.memory is None:
+                await self.init_session_store()
+
+            summary_block = ""
+            history: list = []
+            if self.memory is not None:
+                turn = await self.memory.load_turn_context(
+                    memory_session_id, effective_input
+                )
+                summary_block = turn.system_extra()
+                for msg in turn.recent_messages:
+                    if msg["role"] == "user":
+                        history.append(HumanMessage(content=msg.get("content") or ""))
+                    elif msg["role"] == "assistant":
+                        history.append(AIMessage(content=msg.get("content") or ""))
+
+            # summary_block + skill_extra 一并注入 system
+            system_extra = (summary_block or "") + (skill_extra or "")
+
+            prompt = ChatPromptTemplate.from_messages([
+                (
+                    "system",
+                    "你是一个优秀的AI助手, 请简洁准确地回答用户问题。\n"
+                    "若系统提供了【相关记忆 / Solip 假设】，可作参考，"
+                    "但不要当成用户已确认的事实强行使用。\n"
+                    "若系统提供了 # Active Skill，请优先遵循该技能说明。\n"
+                    "{summary_block}",
+                ),
+                MessagesPlaceholder(variable_name="history"),
+                ("human", "{input}"),
+            ])
+            chain = prompt | llm | StrOutputParser()
+
             result = chain.invoke({
-                "input": user_input,
+                "input": llm_input,
                 "history": history,
-                "summary_block": summary_block,
+                "summary_block": system_extra,
             })
+            if not isinstance(result, str):
+                result = "" if result is None else str(result)
+            if not result.strip():
+                return "对话出错: 模型返回空内容，请重试或检查 API Key / 模型设置"
+
             out_ok, out_reason = self.content_filter.check_output(result)
             if not out_ok:
                 return f"[安全拦截] {out_reason}"
 
-            if self.session_store:
-                await self.session_store.add_message(session_id, "user", user_input)
-                await self.session_store.add_message(session_id, "assistant", result)
+            # 历史落库：保留用户原始输入（含 /explain），便于会话列表回看
+            persist_user = user_input
+            if self.memory is not None:
+                memory = self.memory
+                await memory.persist_turn(
+                    session_id=memory_session_id,
+                    user_input=persist_user,
+                    assistant_output=result,
+                )
+
+                async def _bg_compact() -> None:
+                    try:
+                        await memory.compact_after_turn(
+                            session_id=memory_session_id,
+                            user_input=persist_user,
+                            assistant_output=result,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.warning("后台 Solip/Compact 失败: %s", exc)
+
+                asyncio.create_task(_bg_compact())
+            elif self.session_store:
+                await self.session_store.add_message(
+                    memory_session_id, "user", persist_user
+                )
+                await self.session_store.add_message(
+                    memory_session_id, "assistant", result
+                )
             return result
         except Exception as e:
             self.logger.error("对话失败: %s", e)
             return f"对话出错: {sanitize_exception_message(e)}"
+
+    def get_session_memory_snapshot(self, session_id: str) -> dict:
+        """返回摘要 + Solip 下一问，供 GET /api/sessions/{id}/memory。"""
+        if not self.memory:
+            return {
+                "session_id": session_id,
+                "intent_hypothesis": "",
+                "open_loops": [],
+                "next_questions": [],
+                "summary": "",
+            }
+        return self.memory.get_solip(session_id)
 
     # ===== RAG =====
     async def ask_rag(
         self,
         question: str,
         *,
+        tenant_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
-    ) -> str:
-        """向量检索 RAG（内容过滤 + 限流）。"""
+    ) -> tuple[str, list[dict]]:
+        """向量检索 RAG，返回 (answer, sources)。"""
+        from billing.usage import LEDGER
+        from observability.tracing import trace
+
         blocked = await self.security.guard(question, rate_limit=True)
         if blocked:
-            return blocked
+            return blocked, []
 
         llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
-        retriever = self.vector_store.get_or_create_store().as_retriever(
+        store = self._vector_store_for_tenant(tenant_id)
+        try:
+            docs = store.similarity_search(question, k=self.settings.retrieval_top_k)
+        except Exception as e:
+            self.logger.error("RAG 检索失败: %s", e)
+            return f"问答出错: {sanitize_exception_message(e)}", []
+
+        sources = self._docs_to_sources(docs)
+        retriever = store.get_or_create_store().as_retriever(
             search_kwargs={"k": self.settings.retrieval_top_k}
         )
         chain = create_rag_chain(llm, retriever)
         try:
             result = chain.invoke({"question": question})
-            return result
+            answer = result if isinstance(result, str) else str(result)
+            LEDGER.add(tenant_id, requests=1)
+            trace("rag_ask", tenant_id=tenant_id, hits=len(sources))
+            return answer, sources
         except Exception as e:
             self.logger.error("RAG 问答失败: %s", e)
-            return f"问答出错: {sanitize_exception_message(e)}"
+            return f"问答出错: {sanitize_exception_message(e)}", sources
 
     # ===== GraphRAG =====
     async def ask_graph_rag(
         self,
         question: str,
         *,
+        tenant_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
-    ) -> str:
-        """向量检索 + 知识图谱增强问答。
+    ) -> tuple[str, list[dict]]:
+        """向量检索 + 知识图谱增强问答，返回 (answer, sources)。"""
+        from billing.usage import LEDGER
+        from observability.tracing import trace
+        from rag.knowledge_graph import GraphRAGRetriever
 
-        依赖 ``build_knowledge_base`` 或已落盘的 ``knowledge_graph_path``。
-        图谱为空时仍可退化到向量检索；两侧皆空返回明确提示。
-        """
         blocked = await self.security.guard(question, rate_limit=True)
         if blocked:
-            return blocked
+            return blocked, []
 
         llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
+        store = self._vector_store_for_tenant(tenant_id)
+        graph = self._graph_for_tenant(tenant_id)
+        retriever = GraphRAGRetriever(
+            store,
+            graph,
+            depth=self.settings.graph_rag_depth,
+            top_k=self.settings.retrieval_top_k,
+        )
 
-        # 同步 retriever 配置（设置热更新后也一致）
-        self.graph_rag_retriever.depth = self.settings.graph_rag_depth
-        self.graph_rag_retriever.top_k = self.settings.retrieval_top_k
+        try:
+            docs = store.similarity_search(question, k=self.settings.retrieval_top_k)
+            sources = self._docs_to_sources(docs)
+        except Exception:
+            sources = []
 
         chain = create_graph_rag_chain(
             llm,
-            self.graph_rag_retriever,
+            retriever,
             top_k=self.settings.retrieval_top_k,
         )
         try:
             result = chain.invoke({"question": question})
-            return result
+            answer = result if isinstance(result, str) else str(result)
+            LEDGER.add(tenant_id, requests=1)
+            trace("graph_rag_ask", tenant_id=tenant_id, hits=len(sources))
+            return answer, sources
         except Exception as e:
             self.logger.error("GraphRAG 问答失败: %s", e)
-            return f"问答出错: {sanitize_exception_message(e)}"
+            return f"问答出错: {sanitize_exception_message(e)}", sources
 
     @staticmethod
     def _build_files_prefix(files: list | None) -> str:
@@ -420,13 +718,55 @@ class AgentApplication:
         model_name: str | None = None,
         workspace_root: str | None = None,
         files: list | None = None,
+        active_file: str | None = None,
     ) -> str:
-        """运行 ReAct Agent；若带 workspace_root 则注入工作区读写工具。"""
+        """运行 ReAct Agent；若带 workspace_root 则注入工作区读写工具。
+
+        支持 slash Skills：``/explain ...`` 会把技能正文拼进 system_prompt。
+        """
         blocked = await self.security.guard(task, rate_limit=True)
         if blocked:
             return blocked
 
-        llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
+        # 从已打开文件推断 active_file（条件技能 / 日志用）
+        if not active_file and files:
+            first = files[0]
+            if isinstance(first, dict):
+                active_file = first.get("path")
+            else:
+                active_file = getattr(first, "path", None)
+
+        effective_task = task
+        skill_extra = ""
+        skill_temp: float | None = None
+        skill_model: str | None = None
+        try:
+            (
+                effective_task,
+                skill_extra,
+                _sid,
+                resolved,
+                skill_temp,
+                skill_model,
+            ) = await self._resolve_skill_for_turn(
+                task,
+                session_id="agent",
+                active_file=active_file,
+            )
+            # 技能 frontmatter.agent 可覆盖本轮 agent 角色名
+            if resolved is not None and getattr(resolved.command, "agent", None):
+                agent_name = resolved.command.agent  # type: ignore[assignment]
+        except AppError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("Skills 解析失败，回退普通 Agent: %s", e)
+
+        llm = self._resolve_llm(
+            api_key=api_key,
+            api_base=api_base,
+            model_name=skill_model or model_name,
+            temperature=skill_temp,
+        )
         tools = list(self.tool_registry.get_all_tools())
         system_prompt = None
         if workspace_root:
@@ -452,8 +792,20 @@ class AgentApplication:
             except Exception as e:
                 self.logger.warning("注入工作区工具失败: %s", e)
 
+        if skill_extra:
+            # ReAct 的 system_prompt 含 {tools_description} 占位；技能说明追加在末尾
+            if system_prompt:
+                system_prompt = system_prompt + skill_extra
+            else:
+                system_prompt = (
+                    "你是通用助手，使用 ReAct 框架。可用工具:\n\n{tools_description}\n\n"
+                    "请按 Thought/Action/Action Input/Observation/Final Answer 格式响应。\n"
+                    + skill_extra
+                )
+
+        # 技能已展开时，用 effective_task；仍附上打开文件上下文
         prefix = self._build_files_prefix(files)
-        full_task = prefix + "用户请求：\n" + task
+        full_task = prefix + "用户请求：\n" + effective_task
 
         agent = ReActAgent(
             name=agent_name,
@@ -475,40 +827,149 @@ class AgentApplication:
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
-    ) -> str:
-        """多 Agent 协作：sequential / debate / router。
+        use_tool_calling: bool = True,
+    ) -> dict:
+        """每请求独立 Orchestrator，避免并发串模型。
 
-        临时把编排器内各 Agent 的 llm 换成「本轮凭证」，跑完再还原，
-        避免把请求级 Key 留在单例 orchestrator 里。
+        返回::
+            {
+              "final_answer": str,
+              "execution_log": list[str],
+              "agent_outputs": dict,
+              "total_time_ms": float,
+              "success": bool,
+            }
         """
+        from agents.orchestrator import MultiAgentOrchestrator
+        from agents.react_agent import RESEARCHER_SYSTEM_PROMPT, ReActAgent
+        from agents.tool_calling_agent import ToolCallingAgent
+        from billing.usage import LEDGER
+        from infrastructure.llm.openai_compat import create_chat_openai
+        from observability.tracing import trace
+
         blocked = await self.security.guard(task, rate_limit=True)
         if blocked:
-            return blocked
+            return {
+                "final_answer": blocked,
+                "execution_log": [],
+                "agent_outputs": {},
+                "total_time_ms": 0,
+                "success": False,
+            }
 
-        llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
-        # 记下旧 llm，finally 里还原（并发请求时仍有竞态；本 demo 单用户可接受）
-        previous = {name: agent.llm for name, agent in self.orchestrator.agents.items()}
-        try:
-            for agent in self.orchestrator.agents.values():
-                agent.llm = llm
+        key = (api_key or "").strip() or (self.settings.deepseek_api_key or "").strip()
+        base = (api_base or "").strip() or (self.settings.deepseek_api_base or "").strip()
+        model = (model_name or "").strip() or (self.settings.model_name or "").strip()
 
-            if mode == "sequential":
-                result = await self.orchestrator.run_sequential(
-                    task, ["researcher", "coder", "reviewer"]
+        orch = MultiAgentOrchestrator(max_rounds=self.settings.max_agent_iterations)
+        web = self.tool_registry.get_tool("web_search")
+        read = self.tool_registry.get_tool("read_file")
+        code = self.tool_registry.get_tool("execute_python")
+
+        # 优先原生 tool calling（ChatOpenAI）；失败则回退 ReAct
+        agents_ready = False
+        if use_tool_calling and key and base:
+            try:
+                tc_llm = create_chat_openai(
+                    api_key=key,
+                    api_base=base,
+                    model=model,
+                    temperature=self.settings.model_temperature,
+                    max_tokens=self.settings.model_max_tokens,
                 )
-            elif mode == "debate":
-                result = await self.orchestrator.run_debate(
-                    task, ["researcher", "coder", "reviewer"], rounds=2
+                orch.register_agent(
+                    ToolCallingAgent(
+                        name="researcher",
+                        role="信息研究员",
+                        llm=tc_llm,
+                        tools=[t for t in [web] if t],
+                        system_prompt=RESEARCHER_SYSTEM_PROMPT
+                        or "你是信息研究员，需要时调用 web_search。",
+                    )
                 )
+                orch.register_agent(
+                    ToolCallingAgent(
+                        name="coder",
+                        role="程序员",
+                        llm=tc_llm,
+                        tools=[t for t in [read, code] if t],
+                        system_prompt="你是程序员，优先用工具读文件/执行代码。",
+                    )
+                )
+                orch.register_agent(
+                    ToolCallingAgent(
+                        name="reviewer",
+                        role="代码审查员",
+                        llm=tc_llm,
+                        tools=[t for t in [read] if t],
+                        system_prompt="你是代码审查员，基于证据给出审查意见。",
+                    )
+                )
+                agents_ready = True
+            except Exception as e:  # noqa: BLE001
+                self.logger.warning("tool calling 初始化失败，回退 ReAct: %s", e)
+
+        if not agents_ready:
+            llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
+            orch.register_agent(
+                ReActAgent(
+                    name="researcher",
+                    role="信息研究员",
+                    llm=llm,
+                    tools=[t for t in [web] if t],
+                    system_prompt=RESEARCHER_SYSTEM_PROMPT,
+                    max_tool_calls=6,
+                )
+            )
+            orch.register_agent(
+                ReActAgent(
+                    name="coder",
+                    role="程序员",
+                    llm=llm,
+                    tools=[t for t in [read, code] if t],
+                )
+            )
+            orch.register_agent(
+                ReActAgent(
+                    name="reviewer",
+                    role="代码审查员",
+                    llm=llm,
+                    tools=[t for t in [read] if t],
+                )
+            )
+
+        if mode == "sequential":
+            result = await orch.run_sequential(
+                task, ["researcher", "coder", "reviewer"]
+            )
+        elif mode == "debate":
+            result = await orch.run_debate(
+                task, ["researcher", "coder", "reviewer"], rounds=2
+            )
+        else:
+            result = await orch.run_router(task, "researcher")
+
+        LEDGER.add("default", requests=1)
+        trace("multi_agent", mode=mode, success=result.success)
+
+        # 压缩 agent_outputs，带上 trace（若有）
+        outputs: dict = {}
+        for name, raw in (result.agent_outputs or {}).items():
+            if isinstance(raw, dict):
+                outputs[name] = {
+                    "result": raw.get("result"),
+                    "trace": raw.get("trace", []),
+                }
             else:
-                result = await self.orchestrator.run_router(task, "researcher")
+                outputs[name] = {"result": str(raw), "trace": []}
 
-            return result.final_answer
-        finally:
-            for name, old_llm in previous.items():
-                agent = self.orchestrator.agents.get(name)
-                if agent is not None:
-                    agent.llm = old_llm
+        return {
+            "final_answer": result.final_answer,
+            "execution_log": list(result.execution_log or []),
+            "agent_outputs": outputs,
+            "total_time_ms": result.total_time_ms,
+            "success": result.success,
+        }
 
     # ===== 会话 =====
     async def get_chat_history(self, session_id: str, n: int = 20) -> list[dict]:
@@ -525,7 +986,8 @@ class AgentApplication:
         if not self.session_store:
             await self.init_session_store()
         await self.session_store.clear_session(session_id)
-        self._session_summaries.pop(session_id, None)
+        if self.memory is not None:
+            self.memory.forget_session(session_id)
 
     def get_graph_stats(self) -> dict:
         """返回知识图谱统计（含持久化路径）。"""

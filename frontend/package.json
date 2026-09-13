@@ -1,1 +1,65 @@
-{"name":"langchain-demo-frontend","private":true,"version":"0.1.0","type":"module","main":"../electron/main.cjs","scripts":{"dev":"vite","build":"tsc -b && vite build","preview":"vite preview","dev:desktop":"concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"","dev:desktop:no-api":"cross-env ELECTRON_START_BACKEND=0 concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"","dist":"npm run build && electron-builder --win"},"dependencies":{"axios":"^1.19.0","react":"^18.3.1","react-dom":"^18.3.1"},"devDependencies":{"@types/react":"^18.3.12","@types/react-dom":"^18.3.1","@vitejs/plugin-react":"^4.3.4","concurrently":"^10.0.4","cross-env":"^7.0.3","electron":"^43.2.0","electron-builder":"^26.15.3","typescript":"^5.6.3","vite":"^5.4.11","wait-on":"^9.1.0"},"build":{"appId":"com.langchain.demo.agent","productName":"LangChain Demo Agent","copyright":"Copyright © LangChain Demo","directories":{"output":"release"},"extraMetadata":{"main":"electron/main.cjs"},"files":["dist/**/*",{"from":"../electron","to":"electron","filter":["**/*.cjs"]}],"win":{"target":["nsis"]},"nsis":{"oneClick":false,"allowToChangeInstallationDirectory":true}}}
+{
+  "name": "langchain-demo-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "../electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "dev:desktop": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev:desktop:no-api": "cross-env ELECTRON_START_BACKEND=0 concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^10.0.4",
+    "cross-env": "^7.0.3",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.langchain.demo.agent",
+    "productName": "LangChain Demo Agent",
+    "copyright": "Copyright © LangChain Demo",
+    "directories": {
+      "output": "release"
+    },
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "files": [
+      "dist/**/*",
+      {
+        "from": "../electron",
+        "to": "electron",
+        "filter": [
+          "**/*.cjs",
+          "**/*.html",
+          "assets/**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "../electron/assets/app-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

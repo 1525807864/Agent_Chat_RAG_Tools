@@ -16,15 +16,42 @@
  *   npm run dist
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  globalShortcut,
+  screen,
+} = require("electron");
 const path = require("path");
 const fs = require("fs");
 const fsp = fs.promises;
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
+const {
+  getSelectedText,
+  isWorthAnalyzing,
+  MIN_LEN,
+} = require("./selection.cjs");
+
+/** 桌面应用图标 / 划词圆形按钮（electron/assets） */
+const APP_ICON_PATH = path.join(__dirname, "assets", "app-icon.png");
+const SELECTION_FAB_PATH = path.join(__dirname, "assets", "selection-fab.png");
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
-
+/** @type {BrowserWindow | null} */
+let explainWindow = null;
+/** @type {BrowserWindow | null} */
+let iconWindow = null;
+/** 防止连按快捷键 / 点图标并发多次分析 */
+let explainInFlight = false;
+/** 松手读到的选区；点图标时用它，不要再 Ctrl+C */
+let pendingExplainText = "";
+/** 划词读选区中，避免重入 */
+let selectionCaptureBusy = false;
+/** 左键按下位置，用来判断拖选还是单击 */
+let mouseDownPos = null;
 /** @type {import("child_process").ChildProcess | null} */
 let apiProcess = null;
 
@@ -83,6 +110,40 @@ async function waitForHealth(timeoutMs = 45000) {
 }
 
 /**
+ * Windows：释放被旧 uvicorn 占用的端口，避免 Electron 二次启动时报 10048。
+ */
+function freeApiPortIfNeeded() {
+  if (process.platform !== "win32") return;
+  try {
+    const out = execSync(`netstat -ano | findstr :${API_PORT}`, {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const pids = new Set();
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.includes("LISTENING")) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (pid && /^\d+$/.test(pid) && pid !== "0") pids.add(pid);
+    }
+    for (const pid of pids) {
+      console.log(`[electron] 端口 ${API_PORT} 被 PID ${pid} 占用，尝试结束旧进程`);
+      try {
+        spawn("taskkill", ["/pid", pid, "/f", "/t"], {
+          shell: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+      } catch (e) {
+        console.warn(`[electron] taskkill ${pid} 失败:`, e);
+      }
+    }
+  } catch {
+    // findstr 无匹配时 exit code 非 0，忽略即可
+  }
+}
+
+/**
  * 启动 FastAPI。
  * 用 `python -m uvicorn`，比直接找 uvicorn.exe 在 Windows/conda 下更稳。
  *
@@ -107,6 +168,9 @@ function startBackend() {
     );
     return;
   }
+
+  // 先清掉残留在端口上的旧后端，再 spawn（否则新进程立刻 10048 退出，UI 仍打到旧代码）
+  freeApiPortIfNeeded();
 
   const python = process.env.PYTHON_PATH || process.env.PYTHON || "python";
 
@@ -240,6 +304,327 @@ function registerWorkspaceIpc() {
     return { ok: true };
   });
 }
+/**
+ * 创建或复用置顶分析小窗（先不抢焦点，避免 Ctrl+C 拷到本窗）
+ */
+function ensureExplainWindow() {
+  if (explainWindow && !explainWindow.isDestroyed()) {
+    return explainWindow;
+  }
+  explainWindow = new BrowserWindow({
+    width: 420,
+    height: 520,
+    minWidth: 320,
+    minHeight: 360,
+    show: false,
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    title: "划词分析",
+    icon: APP_ICON_PATH,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "explain-preload.cjs"),
+    },
+  });
+  explainWindow.loadFile(path.join(__dirname, "explain.html"));
+  explainWindow.on("closed", () => {
+    explainWindow = null;
+  });
+  return explainWindow;
+}
+
+/** 等小窗页面加载完再发 IPC，避免首帧 push 丢失 */
+async function ensureExplainWindowReady() {
+  const win = ensureExplainWindow();
+  if (!win.webContents.isLoading()) return win;
+  await new Promise((resolve) => {
+    win.webContents.once("did-finish-load", resolve);
+  });
+  return win;
+}
+
+/** 向小窗推状态（小窗未就绪时忽略） */
+function pushExplainUpdate(payload) {
+  if (!explainWindow || explainWindow.isDestroyed()) return;
+  explainWindow.webContents.send("explain:update", payload);
+}
+
+/**
+ * 调现有 FastAPI：POST /api/chat
+ */
+async function analyzeTextWithBackend(selected) {
+  const clipped =
+    selected.length > 9000 ? `${selected.slice(0, 9000)}\n…(已截断)` : selected;
+  const message =
+    "请分析下面用户选中的内容。若是代码：说明作用、关键逻辑、注意点；" +
+    "若是普通文字：概括含义并解释难懂处。用简洁中文回答。\n\n" +
+    "---- 选中内容开始 ----\n" +
+    clipped +
+    "\n---- 选中内容结束 ----";
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      session_id: `explain-${Date.now()}`,
+      mode: "chat",
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => res.statusText);
+    throw new Error(t || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.answer || "";
+}
+
+/** ---------- 划词圆形图标窗 ---------- */
+
+function ensureIconWindow() {
+  if (iconWindow && !iconWindow.isDestroyed()) return iconWindow;
+
+  iconWindow = new BrowserWindow({
+    width: 44,
+    height: 44,
+    show: false,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    focusable: true,
+    hasShadow: false,
+    icon: APP_ICON_PATH,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "icon-preload.cjs"),
+    },
+  });
+
+  iconWindow.setAlwaysOnTop(true, "screen-saver");
+  iconWindow.loadFile(path.join(__dirname, "icon.html"));
+  iconWindow.on("closed", () => {
+    iconWindow = null;
+  });
+  return iconWindow;
+}
+
+function hideIconWindow() {
+  if (iconWindow && !iconWindow.isDestroyed() && iconWindow.isVisible()) {
+    iconWindow.hide();
+  }
+}
+
+function showIconWindowAt(screenX, screenY, text) {
+  pendingExplainText = text;
+  const win = ensureIconWindow();
+
+  let x = Math.round(screenX + 16);
+  let y = Math.round(screenY + 16);
+  const display = screen.getDisplayNearestPoint({ x, y });
+  const b = display.workArea;
+  x = Math.min(x, b.x + b.width - 48);
+  y = Math.min(y, b.y + b.height - 48);
+  x = Math.max(x, b.x);
+  y = Math.max(y, b.y);
+
+  win.setPosition(x, y);
+  if (!win.isVisible()) win.showInactive();
+}
+
+function isPointInOurWindows(screenX, screenY) {
+  const wins = [iconWindow, explainWindow, mainWindow];
+  for (const w of wins) {
+    if (!w || w.isDestroyed() || !w.isVisible()) continue;
+    const [wx, wy] = w.getPosition();
+    const [ww, wh] = w.getSize();
+    if (
+      screenX >= wx &&
+      screenX <= wx + ww &&
+      screenY >= wy &&
+      screenY <= wy + wh
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function onGlobalMouseUpMaybeShowIcon(screenX, screenY) {
+  if (selectionCaptureBusy || explainInFlight) return;
+  if (isPointInOurWindows(screenX, screenY)) return;
+
+  selectionCaptureBusy = true;
+  try {
+    const { text, method } = await getSelectedText();
+    console.log(`[icon] capture method=${method}, len=${text.length}`);
+    if (!isWorthAnalyzing(text)) {
+      hideIconWindow();
+      pendingExplainText = "";
+      return;
+    }
+    showIconWindowAt(screenX, screenY, text);
+  } catch (e) {
+    console.error("[icon] capture failed", e);
+    hideIconWindow();
+  } finally {
+    selectionCaptureBusy = false;
+  }
+}
+
+/**
+ * 用已知文本打开分析窗并请求后端（快捷键 / 点图标共用）
+ */
+async function runExplainWithText(text) {
+  if (explainInFlight) {
+    console.log("[explain] 已有任务进行中，忽略");
+    return;
+  }
+  explainInFlight = true;
+  hideIconWindow();
+
+  try {
+    const win = await ensureExplainWindowReady();
+    if (!win.isVisible()) win.show();
+    win.focus();
+
+    if (!isWorthAnalyzing(text)) {
+      pushExplainUpdate({
+        phase: "error",
+        selected: text || "",
+        detail: `未读到有效选区（至少 ${MIN_LEN} 个字符）。`,
+      });
+      return;
+    }
+
+    pushExplainUpdate({
+      phase: "loading",
+      selected: text,
+      answer: "",
+    });
+
+    const answer = await analyzeTextWithBackend(text);
+    pushExplainUpdate({
+      phase: "done",
+      selected: text,
+      answer,
+    });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error("[explain]", detail);
+    try {
+      await ensureExplainWindowReady();
+      if (explainWindow && !explainWindow.isDestroyed()) {
+        if (!explainWindow.isVisible()) explainWindow.show();
+        explainWindow.focus();
+      }
+      pushExplainUpdate({
+        phase: "error",
+        detail: detail || "分析失败",
+      });
+    } catch {
+      /* ignore */
+    }
+  } finally {
+    explainInFlight = false;
+  }
+}
+
+/** 快捷键：现场读选区 → 分析（不经过图标） */
+async function runExplainFromHotkey() {
+  const { text, method } = await getSelectedText();
+  console.log(`[explain] hotkey method=${method}, len=${text.length}`);
+  await runExplainWithText(text);
+}
+
+function registerExplainHotkey() {
+  globalShortcut.unregisterAll();
+  const accel = "CommandOrControl+Shift+A";
+  const ok = globalShortcut.register(accel, () => {
+    void runExplainFromHotkey();
+  });
+  if (!ok) {
+    console.error(`[explain] 快捷键注册失败：${accel}（可能被其它软件占用）`);
+  } else {
+    console.log(`[explain] 已注册全局快捷键：${accel}`);
+  }
+}
+
+function registerExplainIpc() {
+  ipcMain.on("explain:close", () => {
+    if (explainWindow && !explainWindow.isDestroyed()) {
+      explainWindow.close();
+    }
+  });
+
+  ipcMain.on("icon:analyze", () => {
+    const text = pendingExplainText;
+    if (!isWorthAnalyzing(text)) {
+      hideIconWindow();
+      return;
+    }
+    void runExplainWithText(text);
+  });
+}
+
+/** 全局鼠标钩子：拖选松手后弹出圆形分析图标 */
+function startGlobalSelectionHook() {
+  let uIOhook;
+  try {
+    uIOhook = require(path.join(
+      __dirname,
+      "..",
+      "frontend",
+      "node_modules",
+      "uiohook-napi",
+    )).uIOhook;
+  } catch (e1) {
+    try {
+      uIOhook = require("uiohook-napi").uIOhook;
+    } catch (e2) {
+      console.warn(
+        "[icon] 未加载 uiohook-napi，划词图标不可用（快捷键仍可用）。",
+        e2?.message || e1?.message,
+      );
+      return;
+    }
+  }
+
+  uIOhook.on("mousedown", (e) => {
+    if (e.button === 1) {
+      mouseDownPos = { x: e.x, y: e.y };
+    }
+  });
+
+  uIOhook.on("mouseup", (e) => {
+    if (e.button !== 1) return;
+    const down = mouseDownPos;
+    mouseDownPos = null;
+    if (!down) return;
+
+    const dist = Math.hypot(e.x - down.x, e.y - down.y);
+    if (dist < 6) return;
+
+    setTimeout(() => {
+      void onGlobalMouseUpMaybeShowIcon(e.x, e.y);
+    }, 80);
+  });
+
+  uIOhook.start();
+  console.log("[icon] 全局鼠标钩子已启动");
+  console.log("[icon] fab asset:", SELECTION_FAB_PATH);
+
+  app.on("will-quit", () => {
+    try {
+      uIOhook.stop();
+    } catch {
+      /* ignore */
+    }
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -248,8 +633,8 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     title: "LangChain Demo Agent",
+    icon: APP_ICON_PATH,
     webPreferences: {
-      // 安全默认：渲染进程不能直接 require Node
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, "preload.cjs"),
@@ -257,12 +642,8 @@ function createWindow() {
   });
 
   if (!app.isPackaged) {
-    // 开发：连 Vite 热更新
     mainWindow.loadURL("http://127.0.0.1:5173");
-    // 需要调试前端时可打开：
-    // mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
-    // 生产：加载打包后的静态页（vite base 必须是 "./"）
     mainWindow.loadFile(getRendererIndexHtml());
   }
 
@@ -272,22 +653,20 @@ function createWindow() {
 }
 
 async function boot() {
-  // 0) 注册工作区 IPC（选目录 / 列目录 / 读 / 写）
   registerWorkspaceIpc();
+  registerExplainIpc();
 
-  // 1) 先起后端（可被环境变量关掉）
   startBackend();
 
-  // 2) 等健康检查；若用户手动起了后端，这里也会立刻通过
   try {
     await waitForHealth();
   } catch (e) {
     console.error(e);
-    // 即使超时也开窗口，方便用户在 UI 里看到「API 不可达」并自行排查
   }
 
-  // 3) 开窗口
   createWindow();
+  registerExplainHotkey();
+  startGlobalSelectionHook();
 }
 
 app.whenReady().then(boot);
@@ -300,6 +679,7 @@ app.on("activate", () => {
 });
 
 app.on("window-all-closed", () => {
+  globalShortcut.unregisterAll();
   stopBackend();
   if (process.platform !== "darwin") {
     app.quit();
@@ -307,5 +687,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
   stopBackend();
 });

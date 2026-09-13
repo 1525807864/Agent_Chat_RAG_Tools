@@ -95,7 +95,7 @@ class ChatResponse(BaseModel):
     """非流式聊天响应 — 整段答案一次性返回。
 
     meta 预留给扩展信息（如 multi 时回传实际使用的 multi_mode、
-    未来的检索来源列表等），避免频繁改顶层字段破坏前端兼容。
+    RAG sources、多 Agent 轨迹等），避免频繁改顶层字段破坏前端兼容。
     """
 
     session_id: str
@@ -104,28 +104,52 @@ class ChatResponse(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
-class SessionMessage(BaseModel):
-    """会话中的单条历史消息（简化视图）。
+class SourceHit(BaseModel):
+    """RAG 单条引用。"""
 
-    与 ``session_store`` 内部可能附带的 ``timestamp`` 等字段解耦：
-    HTTP 响应只暴露前端展示必需的 role/content，避免泄漏存储实现细节。
-    """
+    doc_id: str
+    snippet: str
+    score: Optional[float] = None
+    page: Optional[int] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionMessage(BaseModel):
+    """会话中的单条历史消息（简化视图）。"""
 
     role: str
     content: str
 
 
 class SessionHistoryResponse(BaseModel):
-    """``GET /api/sessions/{session_id}`` 的响应：某会话的近期消息列表。"""
+    """``GET /api/sessions/{session_id}`` 的响应。"""
 
     session_id: str
     messages: List[SessionMessage]
 
 
 class SessionListResponse(BaseModel):
-    """``GET /api/sessions`` 的响应：当前后端中存在历史的会话 ID 列表。"""
+    """``GET /api/sessions`` 的响应。"""
 
     sessions: List[str]
+
+
+class SolipNextQuestion(BaseModel):
+    """Solip 预测的一条「用户可能的下一问」。"""
+
+    question: str
+    confidence: float = 0.5
+    reason: str = ""
+
+
+class SessionMemoryResponse(BaseModel):
+    """``GET /api/sessions/{session_id}/memory``：摘要 + Solip 快照。"""
+
+    session_id: str
+    intent_hypothesis: str = ""
+    open_loops: List[str] = Field(default_factory=list)
+    next_questions: List[SolipNextQuestion] = Field(default_factory=list)
+    summary: str = ""
 
 
 class BuildKBRequest(BaseModel):
@@ -144,6 +168,41 @@ class BuildKBResponse(BaseModel):
     doc_dir: str
     chunk_count: int
     message: str
+
+
+class KbJobResponse(BaseModel):
+    """异步建库任务状态。"""
+
+    job_id: str
+    tenant_id: str
+    doc_dir: str
+    status: str
+    progress: int = 0
+    message: str = ""
+    chunk_count: int = 0
+    error: Optional[str] = None
+
+
+class DocInfo(BaseModel):
+    """租户文档列表项。"""
+
+    name: str
+    size: int
+    path: str
+
+
+class DocListResponse(BaseModel):
+    """租户文档列表。"""
+
+    tenant_id: str
+    docs: List[DocInfo] = Field(default_factory=list)
+
+
+class UsageResponse(BaseModel):
+    """用量快照。"""
+
+    tenant_id: Optional[str] = None
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):

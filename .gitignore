@@ -1,4 +1,5 @@
 # --- secrets / local env (never commit) ---
+# Real keys (DeepSeek / Tavily / JWT / Embedding) live only in .env — not here.
 .env
 .env.*
 !.env.example
@@ -6,6 +7,14 @@
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+**/credentials.json
+service-account*.json
 
 # --- Python ---
 __pycache__/
@@ -25,20 +34,25 @@ venv/
 htmlcov/
 *.log
 
-# --- IDE / OS ---
+# --- IDE / OS / local Claude ---
 .idea/
 .vscode/
+.claude/
 *.swp
 .DS_Store
 Thumbs.db
 
-# --- runtime data (local DBs, vectors, logs) ---
-data/*.db
-data/*.db-*
+# --- runtime data (local DBs, vectors, logs, session memory) ---
+*.db
+*.db-*
+data/**/*.db
+data/**/*.db-*
 data/app.log
 data/vector_store/
 data/knowledge_graph.json
 data/workspace/
+data/memdir/
+data/tenants/
 
 # --- frontend / Electron ---
 frontend/node_modules/

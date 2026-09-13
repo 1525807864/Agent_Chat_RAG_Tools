@@ -117,13 +117,20 @@ async def run_cli() -> None:
             if current_mode == "chat":
                 response = await app.ask_chat(user_input)
             elif current_mode == "rag":
-                response = await app.ask_rag(user_input)
+                answer, sources = await app.ask_rag(user_input)
+                response = answer
+                if sources:
+                    response += f"\n\n[sources: {len(sources)}]"
             elif current_mode == "graph-rag":
-                response = await app.ask_graph_rag(user_input)
+                answer, sources = await app.ask_graph_rag(user_input)
+                response = answer
+                if sources:
+                    response += f"\n\n[sources: {len(sources)}]"
             elif current_mode == "agent":
                 response = await app.ask_agent(user_input)
             elif current_mode == "multi":
-                response = await app.ask_multi_agent(user_input)
+                multi = await app.ask_multi_agent(user_input)
+                response = multi.get("final_answer", "")
             elif current_mode == "build":
                 count = app.build_knowledge_base(user_input)
                 response = f"知识库构建完成, 共加载 {count} 个文档片段"

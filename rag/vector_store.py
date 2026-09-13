@@ -32,12 +32,8 @@ class VectorStoreManager:
     @property
     def embeddings(self) -> Embeddings:
         if self._embedding is None:
-            from langchain_openai import OpenAIEmbeddings
-            self._embedding = OpenAIEmbeddings(
-                model=self.embedding_model_name,
-                openai_api_base=os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"),
-                openai_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-            )
+            from infrastructure.embeddings.factory import create_embeddings
+            self._embedding = create_embeddings()
         return self._embedding
 
     def get_or_create_store(self):

@@ -1,182 +1,220 @@
-"""api.routes.chat — 对话相关 HTTP 路由
+"""api.routes.chat — 对话 + 真流式（chat 模式）+ 鉴权 + meta(sources/traces)。"""
 
-本模块职责
-==========
-提供两类接口：
-1. ``POST /api/chat``          — 同步（非流式）整段返回答案
-2. ``POST /api/chat/stream``   — SSE 占位流式（当前仍是整段生成后再推事件）
-
-与业务核心的关系
-================
-真正的推理、RAG、Agent 编排都在 ``application.AgentApplication``：
-本模块的 ``_dispatch`` 仅按 ``ChatRequest.mode`` 做「路由器」映射，
-不复制业务逻辑，以便 CLI（``main.py``）与 HTTP 行为一致。
-
-SSE 为何是「占位」
-==================
-``llm_deepseek.DeepSeekChatModel`` 目前只实现 ``_generate``，没有真正的
-token 级 ``_astream``。前端仍可先按 SSE 协议对接（start → message → done），
-待 LLM 层支持流式后再改 ``event_generator`` 内的推送粒度即可。
-"""
+from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, SystemMessage
 
+from api.auth.deps import AuthUser, get_current_user
 from api.deps import get_agent_app
 from api.schemas import ChatRequest, ChatResponse
 from application.services.agent_application import AgentApplication
+from billing.usage import LEDGER
+from observability.tracing import new_request_id, set_request_id, trace
 from shared.errors import AppError
 
-# prefix="/api"：与 sessions/knowledge 保持同一 API 命名空间；
-# tags=["chat"]：OpenAPI 文档中单独分组，便于前端对照。
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
-async def _dispatch(app: AgentApplication, req: ChatRequest) -> str:
-    """按 mode 分发到 AgentApplication 对应方法，并返回答案字符串。
-
-    参数
-    ----
-    app:
-        已初始化的业务单例（含 session_store、向量库等）。
-    req:
-        已通过 Pydantic 校验的请求体。
-
-    返回值
-    ------
-    助手最终文本。业务层失败时部分 ask_* 会返回「对话出错: ...」字符串而非抛异常；
-    若抛出未知异常，由上层路由捕获并转为 HTTP 500。
-
-    边界
-    ----
-    - 未知 mode：理论上 Pydantic Literal 已拦截；此处再防一层并返回 400。
-    - ``multi_mode`` / ``agent_name`` 仅在对应 mode 下使用，其它模式忽略字段。
-    - api_key / api_base / model_name 原样传给 ask_*（空则业务层回退 .env）。
-    """
-    # 本轮模型凭证：请求级优先，后端 _resolve_llm 负责回退到 Settings/.env
+async def _dispatch(
+    app: AgentApplication,
+    req: ChatRequest,
+    *,
+    tenant_id: str,
+) -> tuple[str, dict]:
+    """返回 (answer, extra_meta)。"""
     llm_kwargs = {
         "api_key": req.api_key,
         "api_base": req.api_base,
         "model_name": req.model_name,
     }
-
-    # 非 agent 模式：若带了打开文件，把内容拼进 message 前缀（只读上下文）
+    active_file = req.files[0].path if req.files else None
     message = req.message
     if req.mode != "agent" and req.files:
-        message = AgentApplication._build_files_prefix(req.files) + "用户请求：\n" + req.message
+        message = (
+            AgentApplication._build_files_prefix(req.files)
+            + "用户请求：\n"
+            + req.message
+        )
 
+    extra: dict = {}
     if req.mode == "chat":
-        # chat 模式才会按 session_id 读写历史；其它模式不带会话上下文。
-        return await app.ask_chat(message, session_id=req.session_id, **llm_kwargs)
+        answer = await app.ask_chat(
+            req.message,
+            session_id=req.session_id,
+            active_file=active_file,
+            files=req.files,
+            **llm_kwargs,
+        )
+        LEDGER.add(tenant_id, requests=1)
+        return answer, extra
+
     if req.mode == "rag":
-        return await app.ask_rag(message, **llm_kwargs)
+        answer, sources = await app.ask_rag(
+            message, tenant_id=tenant_id, **llm_kwargs
+        )
+        extra["sources"] = sources
+        return answer, extra
+
     if req.mode == "graph-rag":
-        return await app.ask_graph_rag(message, **llm_kwargs)
+        answer, sources = await app.ask_graph_rag(
+            message, tenant_id=tenant_id, **llm_kwargs
+        )
+        extra["sources"] = sources
+        return answer, extra
+
     if req.mode == "agent":
-        return await app.ask_agent(
+        answer = await app.ask_agent(
             req.message,
             agent_name=req.agent_name,
             workspace_root=req.workspace_root,
             files=req.files,
+            active_file=active_file,
             **llm_kwargs,
         )
+        LEDGER.add(tenant_id, requests=1)
+        return answer, extra
+
     if req.mode == "multi":
-        # multi_mode: sequential | debate | router → MultiAgentOrchestrator
-        return await app.ask_multi_agent(message, mode=req.multi_mode, **llm_kwargs)
+        result = await app.ask_multi_agent(
+            message, mode=req.multi_mode, **llm_kwargs
+        )
+        extra["execution_log"] = result.get("execution_log", [])
+        extra["agent_outputs"] = result.get("agent_outputs", {})
+        extra["total_time_ms"] = result.get("total_time_ms")
+        extra["success"] = result.get("success")
+        return str(result.get("final_answer") or ""), extra
+
     raise HTTPException(status_code=400, detail=f"未知 mode: {req.mode}")
 
 
-def _response_meta(req: ChatRequest) -> dict:
-    """组装响应 meta：可带回 model_name / multi_mode，绝不带回 api_key。"""
-    meta: dict = {}
+def _response_meta(req: ChatRequest, user: AuthUser, extra: dict | None = None) -> dict:
+    meta: dict = {
+        "user_id": user.user_id,
+        "tenant_id": user.tenant_id,
+        "request_id": new_request_id(),
+    }
     if req.mode == "multi":
         meta["multi_mode"] = req.multi_mode
-    # 仅回传「本轮请求里写明的模型名」，方便前端确认；不猜服务端默认值
     mn = (req.model_name or "").strip()
     if mn:
         meta["model_name"] = mn
+    if extra:
+        meta.update(extra)
     return meta
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> ChatResponse:
-    """非流式对话：一次请求，等待完整答案后返回 JSON。
-
-    调用时机
-    --------
-    前端不需要打字机效果、或调试接口时优先用本端点；实现简单、易测。
-
-    错误处理
-    --------
-    业务异常统一包装为 HTTP 500，``detail`` 为异常字符串。
-    安全拦截（内容过滤）通常以答案文本 ``[安全拦截] ...`` 返回，不视为 HTTP 错误。
-    """
+    rid = request.headers.get("x-request-id") or new_request_id()
+    set_request_id(rid)
+    trace("chat", mode=req.mode, tenant_id=user.tenant_id)
     try:
-        answer = await _dispatch(app, req)
+        answer, extra = await _dispatch(app, req, tenant_id=user.tenant_id)
     except AppError:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    meta = _response_meta(req, user, extra)
+    meta["request_id"] = rid
     return ChatResponse(
         session_id=req.session_id,
         mode=req.mode,
         answer=answer,
-        # multi_mode / model_name 可回传；api_key 永不进 meta
-        meta=_response_meta(req),
+        meta=meta,
     )
 
 
 @router.post("/chat/stream")
 async def chat_stream(
     req: ChatRequest,
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ):
-    """SSE 占位流式接口。
-
-    协议约定（event 名）
-    --------------------
-    - ``start``  ：携带 session_id/mode，前端可显示「生成中」
-    - ``message``：携带 ``delta``（当前为完整答案一次性放入）与 ``done: false``
-    - ``done``   ：结束标记，并再次附带完整 ``answer`` 便于前端落库
-    - ``error``  ：生成过程异常时推送，``detail`` 为错误信息
-
-    实现说明
-    --------
-    当前 DeepSeekChatModel 尚无真正 token 流式，先整段返回一次 event，
-    前端可先按 SSE 协议对接；以后再改 ``llm_deepseek`` 的流式生成与本生成器。
-
-    响应头
-    ------
-    - ``Cache-Control: no-cache``：禁止中间层缓存流
-    - ``X-Accel-Buffering: no``：提醒 Nginx 不要缓冲 SSE（若前面有反代）
-    """
+    """SSE：chat 模式真流式；其它模式仍整段推一次。"""
+    rid = request.headers.get("x-request-id") or new_request_id()
+    set_request_id(rid)
 
     async def event_generator():
-        """异步生成器：按 SSE 文本格式 yield 字符串块。
-
-        SSE 格式要点：``event: <name>\\ndata: <json>\\n\\n``。
-        ``ensure_ascii=False`` 保证中文不以 \\uXXXX 转义，前端直接可读。
-        """
         try:
-            # 先发 start，方便前端立刻进入 loading，而不必等 LLM 返回。
+            start_payload = {
+                "session_id": req.session_id,
+                "mode": req.mode,
+                "tenant_id": user.tenant_id,
+                "user_id": user.user_id,
+                "request_id": rid,
+            }
             yield (
                 f"event: start\ndata: "
-                f"{json.dumps({'session_id': req.session_id, 'mode': req.mode}, ensure_ascii=False)}"
-                f"\n\n"
+                f"{json.dumps(start_payload, ensure_ascii=False)}\n\n"
             )
 
-            answer = await _dispatch(app, req)
-
-            # 兼容前端增量渲染：将来可把 answer 按句/按 token 切开多次 yield；
-            # 现在一次推完，行为上等价于「只有一个大 delta」。
-            payload = {"delta": answer, "done": False}
-            yield f"event: message\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            # chat 模式：直接 astream LLM（无 skills/memory 简化版真流式）
+            if req.mode == "chat":
+                llm = app._resolve_llm(
+                    api_key=req.api_key,
+                    api_base=req.api_base,
+                    model_name=req.model_name,
+                )
+                messages = [
+                    SystemMessage(content="你是一个优秀的AI助手, 请简洁准确地回答用户问题。"),
+                    HumanMessage(content=req.message),
+                ]
+                full = []
+                async for chunk in llm.astream(messages):
+                    text = ""
+                    content = getattr(chunk, "content", None)
+                    if isinstance(content, str):
+                        text = content
+                    elif content is not None:
+                        text = str(content)
+                    if not text:
+                        continue
+                    full.append(text)
+                    yield (
+                        f"event: message\ndata: "
+                        f"{json.dumps({'delta': text, 'done': False}, ensure_ascii=False)}\n\n"
+                    )
+                answer = "".join(full)
+                LEDGER.add(user.tenant_id, requests=1)
+                # 异步落库（不阻塞 SSE）
+                try:
+                    if app.memory is None:
+                        await app.init_session_store()
+                    if app.memory is not None:
+                        await app.memory.persist_turn(
+                            session_id=req.session_id,
+                            user_input=req.message,
+                            assistant_output=answer,
+                        )
+                    elif app.session_store:
+                        await app.session_store.add_message(
+                            req.session_id, "user", req.message
+                        )
+                        await app.session_store.add_message(
+                            req.session_id, "assistant", answer
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    # 流式已完成，落库失败只记日志
+                    trace("stream_persist_fail", error=str(exc))
+            else:
+                answer, _extra = await _dispatch(
+                    app, req, tenant_id=user.tenant_id
+                )
+                yield (
+                    f"event: message\ndata: "
+                    f"{json.dumps({'delta': answer, 'done': False}, ensure_ascii=False)}\n\n"
+                )
 
             done = {"delta": "", "done": True, "answer": answer}
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
@@ -191,5 +229,6 @@ async def chat_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Request-Id": rid,
         },
     )

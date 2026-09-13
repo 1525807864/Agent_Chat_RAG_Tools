@@ -23,8 +23,6 @@ networkx>=3.4.0
 # ===== 缓存与持久化 =====
 redis>=5.2.0
 hiredis>=2.3.0
-sqlalchemy>=2.0.0
-aiosqlite>=0.20.0
 
 # ===== 结构化输出 =====
 pydantic>=2.0.0
@@ -32,10 +30,15 @@ pydantic-settings>=2.0.0
 
 # ===== 工具增强 =====
 httpx>=0.27.0
-tenacity>=9.0.0
 
 # ===== 环境与配置 =====
 python-dotenv>=1.0.0
+
+# ===== 鉴权 =====
+PyJWT>=2.8.0
+
+# ===== CLI =====
+typer>=0.12.0
 
 # ===== HTTP API =====
 fastapi>=0.115.0

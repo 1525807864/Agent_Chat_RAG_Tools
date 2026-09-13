@@ -112,22 +112,6 @@ export interface GraphStatsResponse {
   stats: Record<string, unknown>;
 }
 
-// StreamMessageData：SSE message/done 事件 data 形状（文档用）
-export interface StreamMessageData {
-  // 增量文本
-  delta: string;
-  // 是否结束
-  done: boolean;
-  // 最终全文（done 时常见）
-  answer?: string;
-}
-
-// StreamErrorData：SSE error 事件 data
-export interface StreamErrorData {
-  // 错误说明
-  detail: string;
-}
-
 // UiMessage：前端气泡本地模型（多 id，便于 key/流式更新）
 export interface UiMessage {
   // 前端唯一 id
