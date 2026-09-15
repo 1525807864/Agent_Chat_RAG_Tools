@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 # 模式字面量类型
 # ---------------------------------------------------------------------------
 # Mode：单次对话请求可选的「产品模式」，对应 AgentApplication.ask_* 系列方法。
-# MultiMode：仅当 mode="multi" 时有意义，对应 MultiAgentOrchestrator 三种协作策略。
+# MultiMode：仅当 mode="multi" 时有意义，对应 LangGraph 三种协作策略。
 Mode = Literal["chat", "rag", "graph-rag", "agent", "multi"]
 MultiMode = Literal["sequential", "debate", "router"]
 
@@ -155,11 +155,14 @@ class SessionMemoryResponse(BaseModel):
 class BuildKBRequest(BaseModel):
     """构建知识库请求 — ``POST /api/knowledge/build``。
 
-    doc_dir 必须落在配置 ``allowed_data_roots``（默认 ``data/``）内，
-    由 ``DocumentLoader.load_directory`` 扫描其中的文档文件。
+    ``doc_dir`` 可选：不传时后端使用当前租户上传目录
+    ``data/tenants/<tenant_id>/docs``。
     """
 
-    doc_dir: str = Field(..., description="本地文档目录路径（须在 data/ 下），如 data/docs")
+    doc_dir: Optional[str] = Field(
+        default=None,
+        description="已忽略：始终使用当前租户目录 data/tenants/<tenant>/docs",
+    )
 
 
 class BuildKBResponse(BaseModel):

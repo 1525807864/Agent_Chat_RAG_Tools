@@ -4,16 +4,19 @@
 
 // 导入底层 JSON 客户端与 Base 读取
 import { apiJson, getApiBase } from "./client";
+import { authHeaders } from "../auth/token";
 // 导入请求/响应类型（仅类型，编译后擦除）
 import type {
   BuildKBRequest, // 建库请求
   BuildKBResponse, // 建库响应
   ChatRequest, // 聊天请求
   ChatResponse, // 非流式聊天响应
+  DocListResponse, // 租户文档列表
   GraphStatsResponse, // 图谱统计
   HealthResponse, // 健康检查
   SessionHistoryResponse, // 会话历史
   SessionListResponse, // 会话列表
+  UploadDocResponse, // 上传文档响应
 } from "../types/api";
 
 // GET /health：探活
@@ -54,13 +57,55 @@ export function deleteSession(sessionId: string) {
   );
 }
 
-// POST /api/knowledge/build：构建知识库
-export function buildKnowledge(body: BuildKBRequest) {
-  // 提交 doc_dir
+// POST /api/knowledge/build：构建知识库（可不传 doc_dir，走租户上传目录）
+export function buildKnowledge(body: BuildKBRequest = {}) {
+  // 空对象 {} 时后端默认 data/tenants/<tenant>/docs
   return apiJson<BuildKBResponse>("/api/knowledge/build", {
     method: "POST", // 创建/构建用 POST
     body: JSON.stringify(body), // JSON 体
   });
+}
+
+// GET /api/knowledge/docs：列出当前租户已上传文件
+export function listKnowledgeDocs() {
+  // 无 body
+  return apiJson<DocListResponse>("/api/knowledge/docs");
+}
+
+// POST /api/knowledge/docs/upload：multipart 上传单个文件
+export async function uploadKnowledgeDoc(file: File): Promise<UploadDocResponse> {
+  // FormData：浏览器自动带 multipart boundary
+  const form = new FormData();
+  // 字段名必须与 FastAPI 参数 File(...) 一致：file
+  form.append("file", file);
+
+  // 不要设置 Content-Type，否则会缺 boundary
+  const res = await fetch(`${getApiBase()}/api/knowledge/docs/upload`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+    },
+    body: form,
+  });
+
+  // 失败：尽量解析 FastAPI detail
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") {
+        detail = body.detail;
+      } else if (body?.detail != null) {
+        detail = JSON.stringify(body.detail);
+      }
+    } catch {
+      // 非 JSON：保留 statusText
+    }
+    throw new Error(detail);
+  }
+
+  // 成功：解析上传结果
+  return (await res.json()) as UploadDocResponse;
 }
 
 // GET /api/knowledge/graph/stats：图谱统计
@@ -83,7 +128,10 @@ export async function postChatStream(
   // 直接 fetch 流式地址（不能走 apiJson，因为要读 body 流）
   const res = await fetch(`${getApiBase()}/api/chat/stream`, {
     method: "POST", // POST
-    headers: { "Content-Type": "application/json" }, // JSON 头
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
     body: JSON.stringify(body), // 序列化请求
     signal, // 传入 AbortSignal
   });
@@ -191,4 +239,26 @@ export async function postChatStream(
   }
   // 连接结束后再 flush 一次残留
   flushEvent();
+}
+/**
+ * 登录请求体
+ */
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+/** 登录响应 */
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  auth_enabled: boolean;
+  user_id: string;
+  tenant_id: string;
+}
+/** POST /api/auth/login */
+export function postLogin(body: LoginRequest) {
+  return apiJson<LoginResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

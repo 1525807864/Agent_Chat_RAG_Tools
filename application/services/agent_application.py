@@ -25,7 +25,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from agents.orchestrator import MultiAgentOrchestrator
 from agents.react_agent import RESEARCHER_SYSTEM_PROMPT, ReActAgent
 from agents.tools_registry import create_default_registry, make_workspace_tools
 from application.security_policy import SecurityPolicy
@@ -90,11 +89,6 @@ class AgentApplication:
         # 租户级向量库缓存（P1）
         self._tenant_vector_stores: dict[str, VectorStoreManager] = {}
         self._tenant_graphs: dict[str, KnowledgeGraph] = {}
-
-        self.orchestrator = MultiAgentOrchestrator(
-            max_rounds=self.settings.max_agent_iterations,
-        )
-        self._register_default_agents()
 
         self.rate_limiter = AsyncRateLimiter(
             max_requests=self.settings.rate_limit_requests,
@@ -263,38 +257,6 @@ class AgentApplication:
             plan.model_name,
         )
 
-
-    def _register_default_agents(self) -> None:
-        """一次性注册多 Agent 角色，避免每次 ask_multi_agent 重复覆盖。"""
-        web = self.tool_registry.get_tool("web_search")
-        read = self.tool_registry.get_tool("read_file")
-        code = self.tool_registry.get_tool("execute_python")
-        self.orchestrator.register_agent(
-            ReActAgent(
-                name="researcher",
-                role="信息研究员",
-                llm=self.llm,
-                tools=[t for t in [web] if t],
-                system_prompt=RESEARCHER_SYSTEM_PROMPT,
-                max_tool_calls=6,
-            )
-        )
-        self.orchestrator.register_agent(
-            ReActAgent(
-                name="coder",
-                role="程序员",
-                llm=self.llm,
-                tools=[t for t in [read, code] if t],
-            )
-        )
-        self.orchestrator.register_agent(
-            ReActAgent(
-                name="reviewer",
-                role="代码审查员",
-                llm=self.llm,
-                tools=[t for t in [read] if t],
-            )
-        )
 
     def _vector_store_for_tenant(self, tenant_id: str) -> VectorStoreManager:
         """按租户返回（并缓存）向量库管理器。"""
@@ -861,7 +823,7 @@ class AgentApplication:
         base = (api_base or "").strip() or (self.settings.deepseek_api_base or "").strip()
         model = (model_name or "").strip() or (self.settings.model_name or "").strip()
 
-        orch = MultiAgentOrchestrator(max_rounds=self.settings.max_agent_iterations)
+        orch = MultiAgentOrchestrator()
         web = self.tool_registry.get_tool("web_search")
         read = self.tool_registry.get_tool("read_file")
         code = self.tool_registry.get_tool("execute_python")
@@ -938,16 +900,13 @@ class AgentApplication:
                 )
             )
 
-        if mode == "sequential":
-            result = await orch.run_sequential(
-                task, ["researcher", "coder", "reviewer"]
-            )
-        elif mode == "debate":
-            result = await orch.run_debate(
-                task, ["researcher", "coder", "reviewer"], rounds=2
-            )
-        else:
-            result = await orch.run_router(task, "researcher")
+        from agents.graphs.multi_agent_graph import run_multi_agent_graph
+        result = await run_multi_agent_graph(
+            orch.agents,
+            task,
+            mode=mode,
+            debate_rounds=2,
+        )
 
         LEDGER.add("default", requests=1)
         trace("multi_agent", mode=mode, success=result.success)

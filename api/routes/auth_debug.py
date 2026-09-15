@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter,HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth.jwt_auth import create_access_token
@@ -30,8 +30,11 @@ class DevTokenResponse(BaseModel):
 
 @router.post("/dev-token", response_model=DevTokenResponse)
 async def issue_dev_token(req: DevTokenRequest) -> DevTokenResponse:
-    """签发调试用 JWT。AUTH_ENABLED=false 时仍可签发，便于联调。"""
+    """仅开发联调使用，生产环境AUTH_DEBUG_ENABLED=false时路由根本不会注册"""
     settings = get_settings()
+    #双保险
+    if not settings.auth_debug_enabled:
+        raise HTTPException(status_code=404,detail="路由未启用")
     token = create_access_token(subject=req.user_id, tenant_id=req.tenant_id)
     return DevTokenResponse(
         access_token=token,

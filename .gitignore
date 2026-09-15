@@ -4,6 +4,7 @@
 .env.*
 !.env.example
 !**/.env.example
+!.env.production.example
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
@@ -22,8 +23,9 @@ __pycache__/
 *$py.class
 *.egg-info/
 .eggs/
-dist/
-build/
+# 只忽略仓库根目录的 dist/build，不要误伤 frontend 源码目录
+/dist/
+/build/
 .venv/
 venv/
 .envrc
@@ -42,6 +44,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# --- frontend：源码要提交；只忽略依赖与本地构建产物 ---
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+frontend/.vite/
+
 # --- runtime data (local DBs, vectors, logs, session memory) ---
 *.db
 *.db-*
@@ -53,11 +61,3 @@ data/knowledge_graph.json
 data/workspace/
 data/memdir/
 data/tenants/
-
-# --- frontend / Electron ---
-frontend/node_modules/
-frontend/dist/
-frontend/release/
-frontend/.vite/
-frontend/*.tsbuildinfo
-frontend/node_modules/.tmp/

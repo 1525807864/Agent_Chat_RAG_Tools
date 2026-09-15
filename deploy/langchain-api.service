@@ -1,0 +1,20 @@
+[Unit]
+Description=LangChain Demo FastAPI
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/LangChain_Demo
+EnvironmentFile=/opt/LangChain_Demo/.env
+ExecStart=/opt/LangChain_Demo/.venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8020 --workers 1
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/LangChain_Demo/data
+
+[Install]
+WantedBy=multi-user.target

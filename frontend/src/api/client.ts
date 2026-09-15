@@ -1,7 +1,7 @@
 // ============================================================================
 // client.ts：HTTP 底层 —— 解析 Base URL + 统一 apiJson
 // ============================================================================
-
+import { authHeaders } from "../auth/token";
 // 解析后端根地址：Electron > .env > 默认 8020；并去掉末尾斜杠
 function resolveApiBase(): string {
   // 尝试读 Electron preload 注入的 apiBase
@@ -61,6 +61,7 @@ export async function apiJson<T>(
     headers: {
       // 告诉后端请求体是 JSON
       "Content-Type": "application/json",
+      ...authHeaders(),
       // 调用方额外 headers（若有）
       ...(init?.headers || {}),
     },
@@ -73,3 +74,4 @@ export async function apiJson<T>(
   // 成功：解析 JSON 并断言为泛型 T
   return (await res.json()) as T;
 }
+ 

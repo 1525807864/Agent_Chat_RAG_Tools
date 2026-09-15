@@ -1,89 +1,165 @@
 // ============================================================================
-// KnowledgePanel.tsx：右侧知识库 —— 建库 + 图谱统计（组件内自治）
+// KnowledgePanel.tsx：上传文档 → 一键建库（用户不用填服务器路径）
 // ============================================================================
 
-// 导入 useState
-import { useState } from "react";
-// 导入 API
-import { buildKnowledge, getGraphStats } from "../api/endpoints";
+import { useCallback, useEffect, useState } from "react";
+import {
+  buildKnowledge,
+  getGraphStats,
+  listKnowledgeDocs,
+  uploadKnowledgeDoc,
+} from "../api/endpoints";
+import type { DocInfo } from "../types/api";
 
-// 导出面板（无 props）
+// 与后端 ALLOWED_UPLOAD_SUFFIXES / DocumentLoader 白名单对齐
+const ACCEPT =
+  ".pdf,.txt,.md,.html,.csv,.json,.docx,.xlsx,application/pdf," +
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 export function KnowledgePanel() {
-  // 文档目录，默认 data/docs
-  const [docDir, setDocDir] = useState("data/docs");
-  // 请求中锁定按钮
+  // 任一请求进行中时锁定交互
   const [busy, setBusy] = useState(false);
+  // 当前租户已上传文件列表
+  const [docs, setDocs] = useState<DocInfo[]>([]);
   // 建库结果文案
   const [buildMsg, setBuildMsg] = useState<string | null>(null);
-  // 统计 JSON 文本
+  // 图谱统计 JSON 文本
   const [statsText, setStatsText] = useState<string | null>(null);
-  // 错误文案
+  // 错误条
   const [err, setErr] = useState<string | null>(null);
+  // 上传进度提示
+  const [uploadHint, setUploadHint] = useState<string | null>(null);
 
-  // 构建知识库
-  const onBuild = async () => {
-    setBusy(true); // 开始忙碌
-    setErr(null); // 清错误
-    setBuildMsg(null); // 清旧结果
+  // 刷新文档列表（GET /api/knowledge/docs）
+  const refreshDocs = useCallback(async () => {
+    const res = await listKnowledgeDocs();
+    setDocs(res.docs || []);
+  }, []);
+
+  // 面板挂载时拉一次列表
+  useEffect(() => {
+    void refreshDocs().catch((e) => {
+      setErr(e instanceof Error ? e.message : String(e));
+    });
+  }, [refreshDocs]);
+
+  // 选择文件后逐个上传到租户 docs
+  const onPickFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    setUploadHint(null);
     try {
-      // 调后端建库
-      const res = await buildKnowledge({ doc_dir: docDir.trim() });
-      // 拼展示文案
-      setBuildMsg(`${res.message}\n分块数：${res.chunk_count}\n目录：${res.doc_dir}`);
+      const names: string[] = [];
+      for (const file of Array.from(files)) {
+        setUploadHint(`正在上传：${file.name} …`);
+        const res = await uploadKnowledgeDoc(file);
+        names.push(`${res.path} (${res.size} bytes)`);
+      }
+      setUploadHint(`上传完成：${names.join("，")}`);
+      await refreshDocs();
     } catch (e) {
-      // 失败写入 err
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false); // 结束忙碌
+      setBusy(false);
+    }
+  };
+
+  // 一键建库：不传 doc_dir，后端默认租户上传目录
+  const onBuild = async () => {
+    setBusy(true);
+    setErr(null);
+    setBuildMsg(null);
+    try {
+      const res = await buildKnowledge({});
+      setBuildMsg(
+        `${res.message}\n分块数：${res.chunk_count}\n目录：${res.doc_dir}`,
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
   // 拉图谱统计
   const onStats = async () => {
-    setBusy(true); // 忙碌
-    setErr(null); // 清错误
+    setBusy(true);
+    setErr(null);
     try {
-      const res = await getGraphStats(); // 请求
-      setStatsText(JSON.stringify(res.stats, null, 2)); // 美化 JSON
+      const res = await getGraphStats();
+      setStatsText(JSON.stringify(res.stats, null, 2));
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e)); // 错误
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false); // 解锁
+      setBusy(false);
     }
   };
 
-  // 渲染
   return (
     <aside className="panel">
       <div className="panel-header">知识库</div>
       <div className="panel-body">
         <div className="kb-form">
-          {/* 目录输入标签 */}
-          <label className="muted" htmlFor="doc-dir">
-            文档目录（POST /api/knowledge/build）
+          <label className="muted" htmlFor="kb-upload">
+            上传文档（pdf / docx / xlsx / txt / md …）
           </label>
-          {/* 目录输入框 */}
           <input
-            id="doc-dir"
-            value={docDir} // 受控
-            onChange={(e) => setDocDir(e.target.value)} // 更新
-            placeholder="data/docs"
-            disabled={busy} // 忙碌时禁用
+            id="kb-upload"
+            type="file"
+            multiple
+            accept={ACCEPT}
+            disabled={busy}
+            onChange={(e) => {
+              void onPickFiles(e.target.files);
+              // 清空 value，允许重复选择同一文件
+              e.target.value = "";
+            }}
           />
-          {/* 建库按钮 */}
-          <button type="button" className="btn primary" onClick={() => void onBuild()} disabled={busy}>
+
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => void onBuild()}
+            disabled={busy}
+          >
             构建知识库
           </button>
-          {/* 统计按钮 */}
-          <button type="button" className="btn" onClick={() => void onStats()} disabled={busy}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void refreshDocs().catch((e) => setErr(String(e)))}
+            disabled={busy}
+          >
+            刷新列表
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void onStats()}
+            disabled={busy}
+          >
             图谱统计
           </button>
         </div>
-        {/* 错误条 */}
-        {err && <div className="error-banner" style={{ margin: "12px 0 0" }}>{err}</div>}
-        {/* 建库结果 */}
+
+        {uploadHint && <div className="kb-result">{uploadHint}</div>}
+        {err && (
+          <div className="error-banner" style={{ margin: "12px 0 0" }}>
+            {err}
+          </div>
+        )}
         {buildMsg && <div className="kb-result">{buildMsg}</div>}
-        {/* 统计结果 */}
+
+        <div className="kb-stats" style={{ marginTop: 12 }}>
+          <strong>已上传文件（{docs.length}）</strong>
+          {"\n"}
+          {docs.length === 0
+            ? "（空）请先选择文件上传"
+            : docs.map((d) => `${d.path}  ·  ${d.size} bytes`).join("\n")}
+        </div>
+
         {statsText && (
           <div className="kb-stats">
             <strong>GET /api/knowledge/graph/stats</strong>

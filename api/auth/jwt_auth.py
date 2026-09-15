@@ -11,7 +11,7 @@ def create_access_token(
     *,
     subject:str, #用户名/email/手机号
     tenant_id:str, #租户ID，默认default
-    extra:Optional[dict[str,Any]] = None, #额外声明
+    extra: Optional[dict[str, Any]] = None,
 )->str:
     """
     签发access token
@@ -33,7 +33,10 @@ def create_access_token(
     }
     #合并额外字段(不要覆盖sub/exp)
     if extra:
-        payload.update(extra)
+        reserved = set(payload.keys())
+        for key, value in extra.items():
+            if key not in reserved:
+                payload[key] = value
     #用密钥签名，返回字符串token
     token = jwt.encode(
         payload,

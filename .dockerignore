@@ -1,0 +1,37 @@
+# 缩小构建上下文；禁止把 frontend 源码排除掉
+
+.git
+.claude
+.idea
+.vscode
+
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+.env
+.env.*
+!.env.production.example
+
+# 运行时数据（容器用卷挂载）
+data/
+
+# 前端：只排除依赖与构建产物，源码必须进镜像构建
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+frontend/.vite/
+
+# Electron 桌面端不进 Web 镜像（源码可留在仓库，构建时不必拷进上下文）
+electron/
+
+*.log
+*.db
+*.db-*

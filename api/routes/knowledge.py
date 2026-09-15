@@ -22,7 +22,12 @@ from application.tenancy import tenant_docs_dir
 from shared.errors import AppError
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
-
+#允许上传的后缀(与DocumentLoader.SUPPORTED_SUFFIXES对齐)
+ALLOWED_UPLOAD_SUFFIXES = {
+    ".pdf", ".txt", ".md", ".html", ".csv", ".json", ".docx", ".xlsx",
+}
+#单文件上限:20MB,防止内存被撑爆
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 @router.post("/build", response_model=BuildKBResponse)
 async def build_knowledge_base(
@@ -31,22 +36,39 @@ async def build_knowledge_base(
     app: AgentApplication = Depends(get_agent_app),
 ) -> BuildKBResponse:
     """同步建库（小语料）；大语料请用 /build/async。"""
-    try:
-        count = app.build_knowledge_base(req.doc_dir, tenant_id=user.tenant_id)
-    except AppError:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    from application.tenancy import tenant_docs_dir  #租户docs路径工具
+    from shared.path_security import get_project_root #项目根
 
-    return BuildKBResponse(
-        doc_dir=req.doc_dir,
-        chunk_count=count,
-        message=(
+    # 忽略客户端 doc_dir，避免跨租户读 data/ 下其它目录
+    docs_root = tenant_docs_dir(get_project_root(), user.tenant_id)
+    docs_root.mkdir(parents=True, exist_ok=True)
+    try:
+        raw_dir = str(docs_root.relative_to(get_project_root())).replace("\\", "/")
+    except ValueError:
+        raw_dir = str(docs_root)
+    try:
+        count = app.build_knowledge_base(raw_dir,tenant_id=user.tenant_id)
+    except AppError:
+        raise #业务错误原样抛给异常处理器
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=str(e)) from e
+    
+    #空库：给人类可读提示 
+    if count == 0:
+        message = (
+            f"目录存在但未解析到任何文档块(tenant={user.tenant_id})。"
+            f"请先上传 pdf/docx/xlsx/txt/md 等文件后再构建。"
+        )
+    else:
+        message = (
             f"知识库构建完成，共加载 {count} 个文档片段 "
             f"(tenant={user.tenant_id})"
-        ),
+        )
+    return BuildKBResponse(
+        doc_dir=raw_dir,
+        chunk_count=count,
+        message=message,
     )
-
 
 @router.post("/build/async", response_model=KbJobResponse)
 async def build_knowledge_base_async(
@@ -55,8 +77,18 @@ async def build_knowledge_base_async(
     app: AgentApplication = Depends(get_agent_app),
 ) -> KbJobResponse:
     """异步建库：立即返回 job_id，轮询 GET /build/{job_id}。"""
+    from shared.path_security import get_project_root
+
+    # 忽略客户端 doc_dir，只扫当前租户上传目录
+    docs_root = tenant_docs_dir(get_project_root(), user.tenant_id)
+    docs_root.mkdir(parents=True, exist_ok=True)
+    try:
+        raw_dir = str(docs_root.relative_to(get_project_root())).replace("\\", "/")
+    except ValueError:
+        raw_dir = str(docs_root)
+
     job = await enqueue_kb_build(
-        app, tenant_id=user.tenant_id, doc_dir=req.doc_dir
+        app, tenant_id=user.tenant_id, doc_dir=raw_dir
     )
     return KbJobResponse(
         job_id=job.id,
@@ -104,24 +136,39 @@ async def list_docs(
 @router.post("/docs/upload")
 async def upload_doc(
     user: AuthUser = Depends(get_current_user),
-    file: UploadFile = File(...),
+    file: UploadFile = File(...),  # multipart 字段名必须叫 file
 ) -> dict:
-    """上传文件到租户 docs 目录（需在 allowed_data_roots 下）。"""
-    root = tenant_docs_dir(Path("."), user.tenant_id)
-    # 用项目根
+    """上传单个文档到当前租户的 docs 目录。"""
     from shared.path_security import get_project_root
-
+    # 原始文件名 → 只保留 basename，防止 ../../etc/passwd
+    name = Path(file.filename or "upload.bin").name
+    suffix = Path(name).suffix.lower()
+    # 扩展名白名单
+    if suffix not in ALLOWED_UPLOAD_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型: {suffix}，允许: {sorted(ALLOWED_UPLOAD_SUFFIXES)}",
+        )
+    # 读入内存（演示够用；大文件可改成流式写盘）
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件过大，上限 {MAX_UPLOAD_BYTES // (1024 * 1024)}MB",
+        )
+    if not data:
+        raise HTTPException(status_code=400, detail="空文件，拒绝上传")
+    # 目标目录：data/tenants/<tenant>/docs
     root = tenant_docs_dir(get_project_root(), user.tenant_id)
     root.mkdir(parents=True, exist_ok=True)
-    name = Path(file.filename or "upload.bin").name
     dest = root / name
-    data = await file.read()
-    dest.write_bytes(data)
+    dest.write_bytes(data)  # 覆盖同名文件
     return {
         "ok": True,
         "tenant_id": user.tenant_id,
-        "path": name,
+        "path": name,  # 相对租户 docs 的文件名
         "size": len(data),
+        "suffix": suffix,
     }
 
 

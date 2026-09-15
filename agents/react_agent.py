@@ -197,21 +197,6 @@ class ReActAgent(BaseAgent):
         response = await self.llm.ainvoke(messages)
         return response.content or ""
 
-    async def act(self, thought: str) -> str | None:
-        final_answer = self._parse_final_answer(thought)
-        if final_answer:
-            return None
-
-        action_name, action_input = self._parse_action(thought)
-        if not action_name:
-            return None
-
-        tool = self._get_tool_by_name(action_name)
-        if not tool:
-            return f"错误: 未找到工具 '{action_name}'"
-
-        return self._invoke_tool(tool, action_input)
-
     def _force_web_search(self, task: str, context: Optional[dict]) -> dict:
         """模型拒不按 ReAct 格式调用时，直接执行一次 web_search，避免空跑。"""
         tool = self._get_tool_by_name("web_search")

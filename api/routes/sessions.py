@@ -1,12 +1,9 @@
-"""api.routes.sessions — 会话历史相关 HTTP 路由
-
-鉴权：列表 / 查询 / 删除 / memory 均依赖 ``get_current_user``。
-（后续可按 tenant 过滤 session 列表；当前仅要求登录。）
-"""
+"""会话历史 HTTP 路由：必须登录，且只能看见本租户的 session。"""
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.auth.deps import AuthUser, get_current_user
+from api.auth.session_scope import bind_session_id, public_session_id
 from api.deps import get_agent_app
 from api.schemas import (
     SessionHistoryResponse,
@@ -25,13 +22,16 @@ async def list_sessions(
     user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionListResponse:
-    """列出当前存储后端中出现过的所有会话 ID。需鉴权。"""
-    _ = user
     try:
         sessions = await app.list_sessions()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    return SessionListResponse(sessions=sessions)
+    visible = [
+        sid
+        for stored in sessions
+        if (sid := public_session_id(user.tenant_id, stored)) is not None
+    ]
+    return SessionListResponse(sessions=visible)
 
 
 @router.get("/{session_id}/memory", response_model=SessionMemoryResponse)
@@ -40,12 +40,11 @@ async def get_session_memory(
     user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionMemoryResponse:
-    """读取会话记忆快照。需鉴权。"""
-    _ = user
+    scoped = bind_session_id(user.tenant_id, session_id)
     try:
         if app.memory is None and app.session_store is None:
             await app.init_session_store()
-        snap = app.get_session_memory_snapshot(session_id)
+        snap = app.get_session_memory_snapshot(scoped)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -77,10 +76,9 @@ async def get_session_history(
     user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionHistoryResponse:
-    """获取指定会话的近期消息。需鉴权。"""
-    _ = user
+    scoped = bind_session_id(user.tenant_id, session_id)
     try:
-        raw = await app.get_chat_history(session_id)
+        raw = await app.get_chat_history(scoped)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -97,9 +95,9 @@ async def delete_session(
     user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> dict:
-    """清空并删除指定会话。需鉴权。"""
+    scoped = bind_session_id(user.tenant_id, session_id)
     try:
-        await app.delete_session(session_id)
+        await app.delete_session(scoped)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return {

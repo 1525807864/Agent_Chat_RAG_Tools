@@ -116,6 +116,34 @@ button {
   color: var(--accent);
 }
 
+.app-header-spacer {
+  flex: 1;
+}
+
+.login-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.login-input {
+  width: 110px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.8rem;
+}
+
+.login-err {
+  color: #b42318;
+  font-size: 0.75rem;
+  max-width: 220px;
+}
+
 /* ========== 三栏 Grid 外壳（在顶栏下方） ========== */
 .app {
   display: grid; /* 三列网格 */
@@ -645,4 +673,64 @@ button {
     border-top: 1px solid var(--border); /* 与设置区分隔 */
     max-height: none; /* 取消高度限制 */
   }
+}
+
+/* ========== 全屏登录页 ========== */
+
+/* 占满 Electron 窗口，背景与顶栏米色统一 */
+.login-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f7f4ef;
+  padding: 24px;
+}
+
+/* 居中卡片 */
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 24px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.login-card-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-card-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.login-card-hint {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.login-page-input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.login-page-err {
+  margin-top: 4px;
+}
+
+.login-page-btn {
+  margin-top: 12px;
+  height: 36px;
 }

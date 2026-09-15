@@ -85,7 +85,7 @@ export interface SessionListResponse {
 // BuildKBRequest：POST /api/knowledge/build
 export interface BuildKBRequest {
   // 服务端允许根下的文档目录，如 data/docs
-  doc_dir: string;
+  doc_dir?: string;
 }
 
 // BuildKBResponse：构建知识库结果
@@ -96,6 +96,27 @@ export interface BuildKBResponse {
   chunk_count: number;
   // 人类可读说明
   message: string;
+}
+
+//上传接口返回
+export interface UploadDocResponse {
+  ok: boolean;
+  tenant_id: string;
+  path: string; //保存后的文件名
+  size: number; //文件大小
+  suffix?:string;
+}
+
+//文档列表
+export interface DocInfo {
+  name: string;
+  size: number;
+  path: string;
+}
+//文档列表响应
+export interface DocListResponse {
+  tenant_id: string;
+  docs: DocInfo[];
 }
 
 // HealthResponse：GET /health

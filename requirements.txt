@@ -4,6 +4,7 @@ langchain-core>=0.3.0
 langchain-community>=0.3.0
 langchain-openai>=0.2.0
 langchain-chroma>=0.1.0
+langgraph>=0.2.0
 openai>=1.50.0
 
 # ===== 向量数据库 & RAG =====
@@ -15,6 +16,8 @@ tiktoken>=0.7.0
 pypdf>=5.0.0
 beautifulsoup4>=4.12.0
 lxml>=5.3.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
 
 # ===== 知识图谱 =====
 networkx>=3.4.0
@@ -36,6 +39,7 @@ python-dotenv>=1.0.0
 
 # ===== 鉴权 =====
 PyJWT>=2.8.0
+argon2-cffi>=23.1.0
 
 # ===== CLI =====
 typer>=0.12.0
@@ -49,3 +53,6 @@ python-multipart>=0.0.12
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 pytest-mock>=3.14.0
+# ===== Word/Excel 解析（知识库上传） =====
+python-docx>=1.1.0
+openpyxl>=3.1.5

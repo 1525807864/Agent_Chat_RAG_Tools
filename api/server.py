@@ -35,15 +35,22 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from api.auth.security_guard import assert_auth_config
+from api.auth.user_store import init_user_store
 from api.deps import init_agent_app, shutdown_agent_app
 from api.exception_handlers import register_exception_handlers
+from api.middleware import ApiRateLimitMiddleware, SecurityHeadersMiddleware
 from api.schemas import HealthResponse
 from api.routes import chat as chat_routes
 from api.routes import sessions as sessions_routes
 from api.routes import knowledge as knowledge_routes
 from api.routes import auth_debug as auth_debug_routes
+from api.routes import auth_login as auth_login_routes
 from api.routes import billing as billing_routes
+from config.settings import get_settings
+from safety.http_rate_limit import init_http_rate_limiter, shutdown_http_rate_limiter
 
 
 @asynccontextmanager
@@ -60,10 +67,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     - yield 之前：``await init_agent_app()``，失败则服务起不来（避免「假健康」接请求）
     - yield 之后：``await shutdown_agent_app()``，释放模块级单例引用
     """
+    settings = get_settings()
+    assert_auth_config(settings)
+    init_user_store()
+    await init_http_rate_limiter()
     await init_agent_app()
     try:
         yield
     finally:
+        await shutdown_http_rate_limiter()
         # 无论正常关闭还是异常退出路径，都尽量清理单例引用。
         await shutdown_agent_app()
 
@@ -72,6 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # 创建应用实例
 # ---------------------------------------------------------------------------
 # title/version 会出现在 OpenAPI 文档顶部，便于前后端对齐环境。
+_settings = get_settings()
 app = FastAPI(
     title="LangChain Demo Agent API",
     description=(
@@ -80,33 +93,35 @@ app = FastAPI(
     ),
     version="0.2.0",
     lifespan=lifespan,
+    docs_url="/docs" if _settings.openapi_enabled else None,
+    redoc_url="/redoc" if _settings.openapi_enabled else None,
+    openapi_url="/openapi.json" if _settings.openapi_enabled else None,
 )
 
 register_exception_handlers(app)
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
-# 浏览器从「另一源」（如 Vite :5173）访问本 API 时必须放行 Origin。
-# allow_credentials=True 时不能用 allow_origins=["*"]，故显式列出本地前端常见端口。
-# 若部署到其它域名，请在此追加，或改为从环境变量读取白名单。
+# 后添加的中间件先执行：限流 → 安全头 → CORS
+app.add_middleware(ApiRateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+
+_hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
+if _hosts and "*" not in _hosts:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_hosts)
+
+# CORS：白名单来自 CORS_ORIGINS（逗号分隔），生产改为你的 https 域名。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite 默认
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",  # CRA / 其它前端常见端口
-        "http://127.0.0.1:3000",
-        # Electron 打包后用 loadFile 打开页面时，Origin 常为字面量 "null"
-        "null",
-    ],
+    allow_origins=_settings.cors_origin_list(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-Id"],
 )
 
-# 挂载各业务路由（prefix 已在各 router 内部定义，主要为 /api/...）
-app.include_router(auth_debug_routes.router)  # POST /api/auth/dev-token
+# 正式登录始终挂载
+app.include_router(auth_login_routes.router)
+# 调试发 Token：仅 AUTH_DEBUG_ENABLED=true 时挂载
+if _settings.auth_debug_enabled:
+    app.include_router(auth_debug_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(sessions_routes.router)
 app.include_router(knowledge_routes.router)
@@ -139,4 +154,4 @@ async def health() -> HealthResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("api.server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("api.server:app", host="127.0.0.1", port=8000, reload=True)

@@ -1,59 +1,212 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
+    <!-- 声明文档字符集，避免中文 title / alt 乱码 -->
     <meta charset="UTF-8" />
+    <!--
+      Content-Security-Policy：限制本页能加载什么资源。
+      - default-src 'self'：默认只允许同源（本文件旁边的资源）
+      - img-src 'self' file:：允许本地图片（selection-fab.png）
+      - style-src / script-src 带 'unsafe-inline'：允许本文件内联 <style> 和 <script>
+        （小页没有构建步骤，内联最简单；若以后外置 js/css 可再收紧）
+    -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; img-src 'self' file:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'"
     />
+    <!-- 窗口标题（无框窗通常看不见，但任务管理器 / 调试时有用） -->
     <title>分析</title>
     <style>
+      /*
+        html、body 一起设成和 BrowserWindow 一样大的 52×52。
+        这样整页就是一个「命中矩形」，不会多出滚动条或空白边。
+      */
       html,
       body {
+        /* 去掉浏览器默认外边距，否则圆标会偏一点 */
         margin: 0;
-        width: 44px;
-        height: 44px;
+        /* 宽高必须和 main.cjs 里 BrowserWindow({ width: 52, height: 52 }) 一致 */
+        width: 52px;
+        height: 52px;
+        /* 禁止出现滚动条（内容刚好铺满时也不要闪一下） */
         overflow: hidden;
+        /* 页面根背景透明：圆角外的四个角才能「镂空」看桌面 */
         background: transparent;
+        /*
+          关键：不要用 -webkit-app-region: drag。
+          透明无框窗在 Windows 上，全透明像素会点透；外圈 drag 区几乎抓不到。
+          拖动改由下面 JS + IPC setPosition 自己做。
+        */
         -webkit-app-region: no-drag;
       }
+
+      /* 圆形按钮：占满整个 52×52，既是「点击分析」也是「拖动手柄」 */
       button {
         display: block;
-        width: 44px;
-        height: 44px;
+        /* 铺满窗口，不再留 4px 外环（旧方案外环点透，拖不动） */
+        width: 52px;
+        height: 52px;
         padding: 0;
         border: none;
-        border-radius: 50%; /* 强制圆形点击区 */
+        /* 视觉上是圆；四个角仍在窗口矩形里，但被圆角 + 父级透明裁掉观感 */
+        border-radius: 50%;
         overflow: hidden;
-        cursor: pointer;
-        background: transparent;
+        /* 未按下：抓取光标，暗示「可以拖」 */
+        cursor: grab;
+        /*
+          背景必须不透明！
+          Windows + transparent:true 时，完全透明像素鼠标事件会穿到下面窗口。
+          用深色底垫一层，保证整颗圆都能收到 pointer 事件。
+        */
+        background: #111;
+        /* 轻微投影，让图标浮在桌面上更好认 */
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
       }
+
+      /* 按下时：改成「正在抓」光标，并略微缩小，给反馈 */
+      button:active {
+        cursor: grabbing;
+        transform: scale(0.96);
+      }
+
+      /* 图片铺满按钮；pointer-events:none 让事件都落在 button 上，方便统一处理拖/点 */
       button img {
         display: block;
         width: 100%;
         height: 100%;
+        /* 保持圆形裁切，避免方图四角露出来 */
         object-fit: cover;
         border-radius: 50%;
+        /* 事件穿透到 button，避免 img 抢走 mousedown */
         pointer-events: none;
       }
+
+      /* 悬停略提亮，提示「可点」 */
       button:hover {
         filter: brightness(1.08);
-      }
-      button:active {
-        transform: scale(0.96);
       }
     </style>
   </head>
   <body>
+    <!--
+      唯一交互控件。
+      id=btn 给脚本用；title 是系统原生悬停提示。
+    -->
     <button id="btn" type="button" title="分析选中内容">
-      <!-- 相对 icon.html：同目录 assets/selection-fab.png -->
+      <!-- 圆形外观图；路径相对本 html（electron/assets/selection-fab.png） -->
       <img src="./assets/selection-fab.png" alt="分析" />
     </button>
+
     <script>
-      document.getElementById("btn").onclick = () => {
-        window.iconAPI?.analyze();
-      };
+      // ========== 从 DOM 拿到按钮节点 ==========
+      // getElementById：按上面 button 的 id="btn" 取元素；取不到后面会报错，方便早发现
+      const btn = document.getElementById("btn");
+
+      // ========== 拖动阈值（像素） ==========
+      // 按下后移动距离小于 THRESHOLD：当成「单击」→ 分析
+      // 大于等于 THRESHOLD：当成「拖动」→ 只挪窗口，松手不再分析
+      // 5px 是经验值：手抖不会误拖，真拖一下又能立刻进入拖动模式
+      const THRESHOLD = 5;
+
+      // ========== 手势状态机用的变量 ==========
+      // pressing：当前是否按着左键（或捕获了 pointer）还没结束
+      let pressing = false;
+      // dragged：这次按压过程中是否已经超过阈值进入过「拖动模式」
+      let dragged = false;
+      // lastX / lastY：上一帧指针的屏幕坐标（screenX/screenY），用来算相对位移 dx/dy
+      let lastX = 0;
+      let lastY = 0;
+
+      /**
+       * pointerdown：手指/鼠标在按钮上按下。
+       * 用 pointer 事件而不是纯 mouse：
+       * - 和 setPointerCapture 配套，鼠标滑出 52px 小窗也不会丢事件
+       * - 触控笔 / 触摸板更统一（本场景主要是鼠标）
+       */
+      btn.addEventListener("pointerdown", (e) => {
+        // button === 0 表示主键（通常是左键）；中键右键不处理
+        if (e.button !== 0) return;
+
+        // 进入「按压中」状态
+        pressing = true;
+        // 每次新按下都重置：还没拖过
+        dragged = false;
+        // 记录起点屏幕坐标（相对显示器，不是相对窗口）
+        // 后面 move 用「当前 - last」得到相对位移，再累加到窗口位置
+        lastX = e.screenX;
+        lastY = e.screenY;
+
+        // 把后续 pointer 事件锁定到这个按钮上：
+        // 即使指针拖出 BrowserWindow 矩形，仍能收到 pointermove / pointerup
+        btn.setPointerCapture(e.pointerId);
+
+        // 告诉主进程：人还在跟图标互动，重置 5 秒隐藏倒计时
+        window.iconAPI?.ping();
+      });
+
+      /**
+       * pointermove：按住后移动。
+       * 只有 pressing===true 时才处理（避免无关移动乱发 IPC）。
+       */
+      btn.addEventListener("pointermove", (e) => {
+        // 没在按压手势里：忽略（例如鼠标只是从旁边滑过）
+        if (!pressing) return;
+
+        // 相对上一帧的位移（屏幕像素）
+        const dx = e.screenX - lastX;
+        const dy = e.screenY - lastY;
+
+        // 还没进入拖动模式，且累计这一小步仍很小：继续等，可能是单击
+        // 注意：这里用「单帧位移」判断；若单帧都 < 5 但多帧累加很大，
+        // 下面一旦某一帧 >= 5 就会切入拖动。对鼠标通常够用。
+        if (!dragged && Math.hypot(dx, dy) < THRESHOLD) return;
+
+        // 标记：这次按压已经是拖动，松手时不要再触发 analyze
+        dragged = true;
+
+        // 更新「上一帧」坐标，下一帧再算相对差，避免重复加同一段位移
+        lastX = e.screenX;
+        lastY = e.screenY;
+
+        // 通知主进程：窗口相对挪 dx/dy（主进程内部还会 clamp 到工作区）
+        // 名称 relativeMove 与 icon-preload.cjs 暴露的 API 一致
+        window.iconAPI?.relativeMove(dx, dy);
+
+        // 拖动过程中持续续命，避免拖到一半被 5 秒定时器藏掉
+        window.iconAPI?.ping();
+      });
+
+      /**
+       * endPress：统一处理「松手」和「pointer 被系统取消」。
+       * 抽成函数是为了 pointerup / pointercancel 共用同一套收尾逻辑。
+       */
+      function endPress() {
+        // 重复触发保护：已经不在按压中就直接返回
+        if (!pressing) return;
+
+        // 结束按压状态
+        pressing = false;
+
+        // 通知主进程：拖动结束（即使这次其实是单击，也发一下，清 iconDragging）
+        window.iconAPI?.dragEnd();
+
+        // 若全程没有进入拖动模式：视为单击 → 打开分析
+        // 若已经拖过：只挪了位置，不再分析（避免拖完松手误开解释窗）
+        if (!dragged) {
+          window.iconAPI?.analyze();
+        }
+      }
+
+      // 正常松开指针
+      btn.addEventListener("pointerup", endPress);
+      // 异常取消（例如系统手势打断、窗口失焦导致 capture 丢失）
+      btn.addEventListener("pointercancel", endPress);
+
+      // 鼠标进入页面矩形时续命（还没按下，只是悬停看着）
+      // 用可选链：万一 preload 没挂上 iconAPI，也不要抛错把页面搞挂
+      document.body.addEventListener("mouseenter", () => {
+        window.iconAPI?.ping();
+      });
     </script>
   </body>
 </html>

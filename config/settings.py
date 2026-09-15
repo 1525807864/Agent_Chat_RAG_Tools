@@ -240,6 +240,79 @@ class Settings(BaseSettings):
     rate_limit_tokens: int = Field(default=100000, ge=1)
     # 每分钟最多 Token 数
 
+    #========== 生产相关配置 ==========
+    # 是否暴露 /docs /redoc /openapi.json；生产建议 false
+    openapi_enabled: bool = Field(
+        default=True,  # 本地开发默认开文档
+        alias="OPENAPI_ENABLED",
+        description="false 时不挂载 Swagger/ReDoc",
+    )
+    #是否允许调试发token路由,生产必须false
+    auth_debug_enabled: bool = Field(
+        default=True, #本地方便联调
+        alias="AUTH_DEBUG_ENABLED",
+        description="false时不注册 /api/auth/dev-token 路由"
+    )
+    #CORS白名单，逗号分隔的Origin列表字符串
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173,null",
+        alias="CORS_ORIGINS",
+        description="浏览器允许的Origin,逗号分隔",
+    )
+    admin_username: str = Field(
+        default="admin",
+        alias="ADMIN_USERNAME",
+    )
+    admin_password: str = Field(
+        default="admin123456",
+        alias="ADMIN_PASSWORD",
+        description="仅用于空库引导管理员；生产必须改掉默认值",
+    )
+    auth_users_db_path: str = Field(
+        default="data/users.db",
+        alias="AUTH_USERS_DB_PATH",
+        description="用户表 SQLite 路径（相对项目根或绝对路径）",
+    )
+    auth_bootstrap_reset_admin: bool = Field(
+        default=False,
+        alias="AUTH_BOOTSTRAP_RESET_ADMIN",
+        description="true 时每次启动用 ADMIN_PASSWORD 覆盖管理员哈希",
+    )
+    allow_register: bool = Field(
+        default=False,
+        alias="ALLOW_REGISTER",
+        description="是否开放 POST /api/auth/register",
+    )
+    strict_production: bool = Field(
+        default=False,
+        alias="STRICT_PRODUCTION",
+        description="true 时拒绝弱配置启动（调试路由、默认密码、内存限流等）",
+    )
+    trust_proxy: bool = Field(
+        default=False,
+        alias="TRUST_PROXY",
+        description="true 时信任 X-Real-IP / X-Forwarded-For（仅 Nginx 后启用）",
+    )
+    rate_limit_backend: str = Field(
+        default="memory",
+        alias="RATE_LIMIT_BACKEND",
+        description="memory | redis；生产请用 redis",
+    )
+    login_rate_limit: int = Field(
+        default=5,
+        alias="LOGIN_RATE_LIMIT",
+        ge=1,
+        le=60,
+        description="同一 IP 每分钟最多登录尝试次数",
+    )
+    allowed_hosts: str = Field(
+        default="*",
+        alias="ALLOWED_HOSTS",
+        description="TrustedHost 白名单，逗号分隔；* 表示不启用",
+    )
+
+
+
     # 安全
     allowed_tool_patterns: List[str] =Field(default=["*"])  # 允许的工具白名单
     blocked_keywords: List[str] = Field(default=[])# 敏感词过滤
@@ -250,6 +323,14 @@ class Settings(BaseSettings):
     log_level:str = Field(
         default="INFO",
     )
+    @field_validator("rate_limit_backend")
+    @classmethod
+    def validate_rate_limit_backend(cls, v: str) -> str:
+        raw = (v or "memory").strip().lower()
+        if raw not in {"memory", "redis"}:
+            raise ValueError("RATE_LIMIT_BACKEND 只能是 memory 或 redis")
+        return raw
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v:str)->str:
@@ -264,6 +345,14 @@ class Settings(BaseSettings):
         "protected_namespaces": ("settings_",),
         "populate_by_name": True,
     }
+
+
+    def cors_origin_list(self)->list[str]:
+        #把CORS_ORIGINS拆成list，供Fastapi CORSMiddleware使用
+        parts = (self.cors_origins or "").split(",")
+        return [p.strip() for p in parts if p.strip()] #去掉空白，丢掉字段
+        
+
     #配置extar:ignore忽略.env里里面的未知字段，不会因为多余的配置导致程序无法运行
 # 全局单例：避免重复解析 .env / 构造 Settings。
 _settings: Optional[Settings] = None

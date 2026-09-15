@@ -54,13 +54,20 @@ let selectionCaptureBusy = false;
 let mouseDownPos = null;
 /** @type {import("child_process").ChildProcess | null} */
 let apiProcess = null;
-
+/** 划词图标自动隐藏定时器 */
+let iconHideTimer = null;
+/**
+ * 用户是否正在「自定义拖动」圆形图标。
+ * true 时：全局 uIOhook 的 mouseup 应忽略（见 isPointInOurWindows），
+ * 否则拖图标松手会被当成新划词，图标又弹回鼠标旁。
+ */
+let iconDragging = false;
 /** 后端地址：可读环境变量，默认与 frontend/.env.example 的 VITE_API_BASE 一致 */
 const API_HOST = process.env.LANGCHAIN_API_HOST || "127.0.0.1";
 const API_PORT = Number(process.env.LANGCHAIN_API_PORT || 8020);
 const API_BASE =
   process.env.LANGCHAIN_API_BASE || `http://${API_HOST}:${API_PORT}`;
-
+const ICON_HIDE_MS = 5000; //5秒后自动隐藏图标
 /**
  * 仓库根目录（LangChain_Demo/）
  * - 开发：electron/ 的上一级
@@ -385,14 +392,14 @@ function ensureIconWindow() {
   if (iconWindow && !iconWindow.isDestroyed()) return iconWindow;
 
   iconWindow = new BrowserWindow({
-    width: 44,
-    height: 44,
+    width: 52,
+    height: 52,
     show: false,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     resizable: false,
-    movable: false,
+    movable: true, // 保留系统可移动；实际拖动靠 icon.html JS + icon:move（透明窗 CSS drag 不可靠）
     skipTaskbar: true,
     focusable: true,
     hasShadow: false,
@@ -406,13 +413,42 @@ function ensureIconWindow() {
 
   iconWindow.setAlwaysOnTop(true, "screen-saver");
   iconWindow.loadFile(path.join(__dirname, "icon.html"));
+
+  // 拖动中重置 5 秒倒计时，避免拖着拖着图标消失
+  iconWindow.on("will-move", () => {
+    if (iconWindow && !iconWindow.isDestroyed() && iconWindow.isVisible()) {
+      scheduleIconHide();
+    }
+  });
+
   iconWindow.on("closed", () => {
+    clearIconHideTimer();
     iconWindow = null;
   });
   return iconWindow;
 }
 
+function clearIconHideTimer() {
+  if (iconHideTimer) {
+    clearTimeout(iconHideTimer);
+    iconHideTimer = null;
+  }
+}
+
+/** 从现在起再等 5 秒，无人点击/悬停则藏图标 */
+function scheduleIconHide() {
+  clearIconHideTimer();
+  iconHideTimer = setTimeout(() => {
+    hideIconWindow();
+    pendingExplainText = ""; // 过期选区作废
+    iconHideTimer = null;
+  }, ICON_HIDE_MS);
+}
+
 function hideIconWindow() {
+  clearIconHideTimer();
+  // 隐藏时若还在拖，也要清标志，否则全局钩子会一直被 iconDragging 挡住
+  iconDragging = false;
   if (iconWindow && !iconWindow.isDestroyed() && iconWindow.isVisible()) {
     iconWindow.hide();
   }
@@ -426,26 +462,41 @@ function showIconWindowAt(screenX, screenY, text) {
   let y = Math.round(screenY + 16);
   const display = screen.getDisplayNearestPoint({ x, y });
   const b = display.workArea;
-  x = Math.min(x, b.x + b.width - 48);
-  y = Math.min(y, b.y + b.height - 48);
+  // 窗口 52×52，留边距
+  x = Math.min(x, b.x + b.width - 56);
+  y = Math.min(y, b.y + b.height - 56);
   x = Math.max(x, b.x);
   y = Math.max(y, b.y);
 
   win.setPosition(x, y);
   if (!win.isVisible()) win.showInactive();
+  scheduleIconHide();
 }
 
+/**
+ * 判断屏幕坐标是否落在「我们自己的窗口」上（含容差）。
+ * 用途：全局划词钩子 mouseup 时，若点在自己窗上就不要再弹图标 / 读选区。
+ */
 function isPointInOurWindows(screenX, screenY) {
+  // 正在拖圆形图标：整次手势都算「在我们窗上」，直接挡掉全局钩子
+  if (iconDragging) return true;
+
+  // Windows 下 uIOhook 坐标与 BrowserWindow.getPosition() 可能因 DPI 差几像素，
+  // 加一圈 pad，避免拖完松手刚好落在窗边外被误判成「桌面划词」
+  const pad = 24;
+
   const wins = [iconWindow, explainWindow, mainWindow];
   for (const w of wins) {
+    // 窗口不存在 / 已销毁 / 没显示：跳过
     if (!w || w.isDestroyed() || !w.isVisible()) continue;
+    // 窗口左上角与宽高（Electron 逻辑像素）
     const [wx, wy] = w.getPosition();
     const [ww, wh] = w.getSize();
     if (
-      screenX >= wx &&
-      screenX <= wx + ww &&
-      screenY >= wy &&
-      screenY <= wy + wh
+      screenX >= wx - pad &&
+      screenX <= wx + ww + pad &&
+      screenY >= wy - pad &&
+      screenY <= wy + wh + pad
     ) {
       return true;
     }
@@ -561,12 +612,65 @@ function registerExplainIpc() {
   });
 
   ipcMain.on("icon:analyze", () => {
+    clearIconHideTimer(); // 已点击，不要再自动藏
     const text = pendingExplainText;
     if (!isWorthAnalyzing(text)) {
       hideIconWindow();
       return;
     }
     void runExplainWithText(text);
+  });
+
+  // 鼠标停在图标上 / 拖动中：重置 5 秒倒计时
+  ipcMain.on("icon:ping", () => {
+    if (iconWindow && !iconWindow.isDestroyed() && iconWindow.isVisible()) {
+      scheduleIconHide();
+    }
+  });
+
+  /**
+   * icon:move — 渲染进程自定义拖动发来的「相对位移」
+   * payload: { dx, dy }，单位：屏幕像素，相对上一帧，不是绝对坐标
+   */
+  ipcMain.on("icon:move", (_evt, payload) => {
+    // 窗没了或不显示：忽略（避免 hide 之后还在收 move）
+    if (!iconWindow || iconWindow.isDestroyed() || !iconWindow.isVisible()) {
+      return;
+    }
+
+    // 转成数字；非法 / 缺失当 0
+    const dx = Number(payload?.dx) || 0;
+    const dy = Number(payload?.dy) || 0;
+    // 两轴都是 0：没必要 setPosition
+    if (!dx && !dy) return;
+
+    // 标记正在拖：挡住全局划词钩子，直到 icon:drag-end
+    iconDragging = true;
+
+    // 当前窗口左上角
+    const [x, y] = iconWindow.getPosition();
+    // 加上相对位移，得到候选新位置
+    let nx = Math.round(x + dx);
+    let ny = Math.round(y + dy);
+
+    // 钳到最近显示器的工作区（避开任务栏），留 56≈52 窗宽 + 一点边距
+    const display = screen.getDisplayNearestPoint({ x: nx, y: ny });
+    const b = display.workArea;
+    nx = Math.min(Math.max(nx, b.x), b.x + b.width - 56);
+    ny = Math.min(Math.max(ny, b.y), b.y + b.height - 56);
+
+    // 真正挪窗（透明无框窗用 JS 拖，比 -webkit-app-region:drag 可靠）
+    iconWindow.setPosition(nx, ny);
+    // 拖一下也续命，避免拖着拖着 5 秒到了被藏掉
+    scheduleIconHide();
+  });
+
+  /**
+   * icon:drag-end — 渲染进程 pointerup / pointercancel
+   * 清掉拖动标志，之后全局钩子恢复正常判断
+   */
+  ipcMain.on("icon:drag-end", () => {
+    iconDragging = false;
   });
 }
 

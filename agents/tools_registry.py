@@ -223,37 +223,16 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
-        self._tool_permissions: dict[str, set[str]] = {}
 
     def register(self, tool_obj: BaseTool) -> None:
         """按 tool.name 注册；同名覆盖。"""
         self._tools[tool_obj.name] = tool_obj
 
-    def unregister(self, tool_name: str) -> None:
-        self._tools.pop(tool_name, None)
-
     def get_tool(self, name: str) -> BaseTool | None:
         return self._tools.get(name)
 
-    def list_tools(self) -> list[str]:
-        return list(self._tools.keys())
-
     def get_all_tools(self) -> list[BaseTool]:
         return list(self._tools.values())
-
-    def get_tools_for_agent(self, agent_name: str) -> list[BaseTool]:
-        """获取特定 Agent 可用的工具（最小权限原则）。"""
-        allowed = self._tool_permissions.get(agent_name, set(self._tools.keys()))
-        return [t for name, t in self._tools.items() if name in allowed]
-
-    def grant_tool(self, agent_name: str, tool_name: str) -> None:
-        if agent_name not in self._tool_permissions:
-            self._tool_permissions[agent_name] = set()
-        self._tool_permissions[agent_name].add(tool_name)
-
-    def revoke_tool(self, agent_name: str, tool_name: str) -> None:
-        if agent_name in self._tool_permissions:
-            self._tool_permissions[agent_name].discard(tool_name)
 
 
 class WsPathInput(BaseModel):

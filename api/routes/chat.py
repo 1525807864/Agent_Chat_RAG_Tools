@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from api.auth.deps import AuthUser, get_current_user
+from api.auth.session_scope import bind_session_id
 from api.deps import get_agent_app
 from api.schemas import ChatRequest, ChatResponse
 from application.services.agent_application import AgentApplication
@@ -17,6 +18,13 @@ from observability.tracing import new_request_id, set_request_id, trace
 from shared.errors import AppError
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+
+def _scoped_chat_request(req: ChatRequest, user: AuthUser) -> ChatRequest:
+    """把客户端 session_id 绑到租户前缀；响应仍回前端原来的短 id。"""
+    return req.model_copy(
+        update={"session_id": bind_session_id(user.tenant_id, req.session_id)}
+    )
 
 
 async def _dispatch(
@@ -117,8 +125,9 @@ async def chat(
     rid = request.headers.get("x-request-id") or new_request_id()
     set_request_id(rid)
     trace("chat", mode=req.mode, tenant_id=user.tenant_id)
+    scoped = _scoped_chat_request(req, user)
     try:
-        answer, extra = await _dispatch(app, req, tenant_id=user.tenant_id)
+        answer, extra = await _dispatch(app, scoped, tenant_id=user.tenant_id)
     except AppError:
         raise
     except Exception as e:
@@ -144,6 +153,7 @@ async def chat_stream(
     """SSE：chat 模式真流式；其它模式仍整段推一次。"""
     rid = request.headers.get("x-request-id") or new_request_id()
     set_request_id(rid)
+    scoped = _scoped_chat_request(req, user)
 
     async def event_generator():
         try:
@@ -193,23 +203,23 @@ async def chat_stream(
                         await app.init_session_store()
                     if app.memory is not None:
                         await app.memory.persist_turn(
-                            session_id=req.session_id,
+                            session_id=scoped.session_id,
                             user_input=req.message,
                             assistant_output=answer,
                         )
                     elif app.session_store:
                         await app.session_store.add_message(
-                            req.session_id, "user", req.message
+                            scoped.session_id, "user", req.message
                         )
                         await app.session_store.add_message(
-                            req.session_id, "assistant", answer
+                            scoped.session_id, "assistant", answer
                         )
                 except Exception as exc:  # noqa: BLE001
                     # 流式已完成，落库失败只记日志
                     trace("stream_persist_fail", error=str(exc))
             else:
                 answer, _extra = await _dispatch(
-                    app, req, tenant_id=user.tenant_id
+                    app, scoped, tenant_id=user.tenant_id
                 )
                 yield (
                     f"event: message\ndata: "

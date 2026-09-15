@@ -10,6 +10,7 @@ import { ChatInput } from "./components/ChatInput";
 import { ChatMessages } from "./components/ChatMessages";
 import { FileToolbar } from "./components/FileToolbar";
 import { KnowledgePanel } from "./components/KnowledgePanel";
+import { LoginPage } from "./components/LoginPage";
 import { ModeBar } from "./components/ModeBar";
 import { SessionList } from "./components/SessionList";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -20,6 +21,7 @@ import {
 import { useChat } from "./hooks/useChat";
 import { useLlmSettings } from "./hooks/useLlmSettings";
 import { useWorkspace } from "./hooks/useWorkspace";
+import { clearToken, loadToken } from "./auth/token";
 import type { FileTreeNode } from "./types/attachment";
 import type { UiMessage } from "./types/api";
 
@@ -63,6 +65,9 @@ function toUiMessages(raw: { role: string; content: string }[]): UiMessage[] {
 }
 
 export default function App() {
+  // 有本地 JWT 才进主界面；刷新窗口仍保持登录
+  const [loggedIn, setLoggedIn] = useState(() => Boolean(loadToken()));
+
   const { settings, draft, setDraft, save, clear, savedHint } = useLlmSettings();
 
   const {
@@ -211,6 +216,11 @@ export default function App() {
   const canEmptySend =
     (hasDesktopFs && openFiles.length > 0) || attachments.length > 0;
 
+  // 未登录：只渲染登录页，不挂载会话/知识库
+  if (!loggedIn) {
+    return <LoginPage onLoggedIn={() => setLoggedIn(true)} />;
+  }
+
   return (
     /**
      * app-shell：整页外壳
@@ -243,6 +253,17 @@ export default function App() {
           title={sidebarOpen ? "隐藏聊天历史" : "显示聊天历史"}
         >
           <ChatBubbleIcon />
+        </button>
+        <div className="app-header-spacer" />
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            clearToken();
+            setLoggedIn(false);
+          }}
+        >
+          退出登录
         </button>
       </header>
 
