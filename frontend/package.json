@@ -39,6 +39,7 @@
     "extraMetadata": {
       "main": "electron/main.cjs"
     },
+    "npmRebuild": false,
     "files": [
       "dist/**/*",
       {

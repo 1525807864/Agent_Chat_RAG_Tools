@@ -26,6 +26,8 @@ networkx>=3.4.0
 # ===== 缓存与持久化 =====
 redis>=5.2.0
 hiredis>=2.3.0
+PyMySQL>=1.1.0
+cryptography>=42.0.0
 
 # ===== 结构化输出 =====
 pydantic>=2.0.0

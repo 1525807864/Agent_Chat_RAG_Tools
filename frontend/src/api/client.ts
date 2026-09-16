@@ -4,17 +4,15 @@
 import { authHeaders } from "../auth/token";
 // 解析后端根地址：Electron > .env > 默认 8020；并去掉末尾斜杠
 function resolveApiBase(): string {
-  // 尝试读 Electron preload 注入的 apiBase
   const fromElectron = window.electronAPI?.apiBase?.replace(/\/$/, "");
-  // 若桌面端有值，优先使用
-  if (fromElectron) return fromElectron;
-  // 再读 Vite 注入的环境变量 VITE_API_BASE
   const fromEnv = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(
-    /\/$/, // 正则：去掉结尾 /
-    "", // 替换为空串
+    /\/$/,
+    "",
   );
-  // 都没有则硬编码本地默认端口（与前端 .env 常见配置一致）
-  return fromEnv || "http://127.0.0.1:8020";
+  // 桌面与网页共用云 API：Vite 里配的 VITE_API_BASE 优先，避免 preload 默认 127.0.0.1
+  if (fromEnv) return fromEnv;
+  if (fromElectron) return fromElectron;
+  return "http://127.0.0.1:8020";
 }
 
 // 模块加载时计算一次，避免每次请求重复解析

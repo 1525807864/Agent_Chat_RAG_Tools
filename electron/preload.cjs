@@ -7,17 +7,14 @@
  *
  * 前端用法：
  *   window.electronAPI?.isElectron  → true
- *   window.electronAPI?.apiBase     → http://127.0.0.1:8020
+ *   window.electronAPI?.apiBase     → 云 API 或 LANGCHAIN_API_BASE
  */
 
 /**
  * preload：只暴露白名单桥，渲染进程不能直接 require('fs')
  */
 const { contextBridge, ipcRenderer } = require("electron");
-
-/** 与 main 一致：可用 LANGCHAIN_API_BASE 覆盖（preload 能读到同进程 env） */
-const API_BASE =
-  process.env.LANGCHAIN_API_BASE || "http://127.0.0.1:8020";
+const { API_BASE } = require("./api-base.cjs");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,

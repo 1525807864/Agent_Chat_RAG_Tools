@@ -41,6 +41,7 @@ COPY safety/ ./safety/
 COPY shared/ ./shared/
 COPY skills/ ./skills/
 COPY utils/ ./utils/
+COPY domain/ ./domain/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

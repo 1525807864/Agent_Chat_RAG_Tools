@@ -28,6 +28,9 @@ const path = require("path");
 const fs = require("fs");
 const fsp = fs.promises;
 const { spawn, execSync } = require("child_process");
+const { API_BASE, isLocalApi } = require("./api-base.cjs");
+const API_HOST = process.env.LANGCHAIN_API_HOST || "127.0.0.1";
+const API_PORT = Number(process.env.LANGCHAIN_API_PORT || 8020);
 const {
   getSelectedText,
   isWorthAnalyzing,
@@ -62,11 +65,6 @@ let iconHideTimer = null;
  * 否则拖图标松手会被当成新划词，图标又弹回鼠标旁。
  */
 let iconDragging = false;
-/** 后端地址：可读环境变量，默认与 frontend/.env.example 的 VITE_API_BASE 一致 */
-const API_HOST = process.env.LANGCHAIN_API_HOST || "127.0.0.1";
-const API_PORT = Number(process.env.LANGCHAIN_API_PORT || 8020);
-const API_BASE =
-  process.env.LANGCHAIN_API_BASE || `http://${API_HOST}:${API_PORT}`;
 const ICON_HIDE_MS = 5000; //5秒后自动隐藏图标
 /**
  * 仓库根目录（LangChain_Demo/）
@@ -103,6 +101,15 @@ function getRendererIndexHtml() {
  */
 async function waitForHealth(timeoutMs = 45000) {
   const url = `${API_BASE}/health`;
+  if (!isLocalApi(API_BASE)) {
+    try {
+      const res = await fetch(url);
+      if (res.ok || res.status === 400) return;
+    } catch {
+      /* 远端暂时不通也开窗口，避免卡 45 秒 */
+    }
+    return;
+  }
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     try {
@@ -161,6 +168,14 @@ function freeApiPortIfNeeded() {
 function startBackend() {
   if (process.env.ELECTRON_START_BACKEND === "0") {
     console.log("[electron] 跳过自动启动后端（ELECTRON_START_BACKEND=0）");
+    return;
+  }
+  if (!isLocalApi(API_BASE)) {
+    console.log(`[electron] 使用云 API：${API_BASE}，跳过本地 uvicorn`);
+    return;
+  }
+  if (app.isPackaged) {
+    console.log("[electron] 安装版不启动本地后端");
     return;
   }
   if (apiProcess) return;
@@ -357,10 +372,28 @@ function pushExplainUpdate(payload) {
   explainWindow.webContents.send("explain:update", payload);
 }
 
+async function getAuthHeaders() {
+  const TOKEN_KEY = "auth.access_token.v1";
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error("请先打开主窗口并登录，再使用划词分析");
+  }
+  const token = await mainWindow.webContents.executeJavaScript(
+    `localStorage.getItem(${JSON.stringify(TOKEN_KEY)}) || ""`,
+    true,
+  );
+  const t = String(token || "").trim();
+  if (!t) {
+    throw new Error("未登录：请在主窗口登录后再划词");
+  }
+  return  { Authorization: `Bearer ${t}` };
+}
+
+
 /**
  * 调现有 FastAPI：POST /api/chat
  */
 async function analyzeTextWithBackend(selected) {
+  const auth = await getAuthHeaders();
   const clipped =
     selected.length > 9000 ? `${selected.slice(0, 9000)}\n…(已截断)` : selected;
   const message =
@@ -371,7 +404,10 @@ async function analyzeTextWithBackend(selected) {
     "\n---- 选中内容结束 ----";
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...auth,
+    },
     body: JSON.stringify({
       message,
       session_id: `explain-${Date.now()}`,
@@ -748,7 +784,8 @@ function createWindow() {
   if (!app.isPackaged) {
     mainWindow.loadURL("http://127.0.0.1:5173");
   } else {
-    mainWindow.loadFile(getRendererIndexHtml());
+    // 安装版直接打开云站点，与网页同源，避免 file:// CORS
+    mainWindow.loadURL(API_BASE);
   }
 
   mainWindow.on("closed", () => {

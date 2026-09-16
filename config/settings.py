@@ -12,10 +12,14 @@
 几乎所有业务模块最终都会读到这里的值；``api`` 层一般不直接读 Settings，
 而是通过已初始化的 ``AgentApplication.settings`` 间接使用。
 
-memory_backend 注意
-===================
-``Settings.memory_backend`` 字段默认是 ``redis``。本地若没有 Redis，
-请在 ``.env`` 中显式设置 ``MEMORY_BACKEND=sqlite``，否则会话初始化可能连不上 Redis。
+auth_backend / memory_backend
+=============================
+``Settings.auth_backend`` 默认 ``mysql``（登录用户表）。Docker 里 ``MYSQL_HOST``
+必须是 compose 服务名 ``mysql``，不要写 ``127.0.0.1``（那是容器自己）。
+本地无 MySQL 时在 ``.env`` 设 ``AUTH_BACKEND=sqlite``。
+
+``Settings.memory_backend`` 默认 ``redis``（聊天会话）。本地若没有 Redis，
+请在 ``.env`` 中显式设置 ``MEMORY_BACKEND=sqlite``。
 API 依赖层（``api.deps``）**不会**自动改写该配置，以免掩盖生产误配。
 
 安全
@@ -133,6 +137,22 @@ class Settings(BaseSettings):
     sqlite_db_path: str = Field(
         default="data/chat_history.db",
     )
+    # ---- MySQL（生产用户表；Compose 内 MYSQL_HOST 必须是服务名 mysql）----
+    mysql_host: str = Field(default="mysql", alias="MYSQL_HOST")
+    mysql_port: int = Field(default=3306, alias="MYSQL_PORT", ge=1, le=65535)
+    mysql_user: str = Field(default="langchain_demo", alias="MYSQL_USER")
+    mysql_password: str = Field(default="", alias="MYSQL_PASSWORD")
+    mysql_database: str = Field(default="langchain_demo", alias="MYSQL_DATABASE")
+    # 登录用户表：生产默认 mysql；本地无库时 AUTH_BACKEND=sqlite
+    auth_backend: str = Field(default="mysql", alias="AUTH_BACKEND")
+    @field_validator("auth_backend")
+    @classmethod
+    def validate_auth_backend(cls,v:str)->str:
+        raw = (v or "mysql").strip().lower()
+        if raw not in {"mysql","sqlite"}:
+            raise ValueError("AUTH_BACKEND 只能是 mysql 或 sqlite")
+        return raw
+
     # ===== 四子系统记忆 / Solip =====
     memdir_path: str = Field(
         default="data/memdir",

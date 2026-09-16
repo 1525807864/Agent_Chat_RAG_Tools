@@ -26,6 +26,6 @@
    `AUTH_ENABLED=true`、`STRICT_PRODUCTION=true`、`AUTH_DEBUG_ENABLED=false`、  
    `OPENAPI_ENABLED=false`、`RATE_LIMIT_BACKEND=redis`、`TRUST_PROXY=true`。
 
-首次启动会把 `ADMIN_USERNAME` / `ADMIN_PASSWORD` **哈希后写入** `data/users.db`。之后改环境变量不会自动改库内密码，除非设 `AUTH_BOOTSTRAP_RESET_ADMIN=true` 再重启一次。
+首次启动会把 `ADMIN_USERNAME` / `ADMIN_PASSWORD` **哈希后写入** MySQL `users` 表（`AUTH_BACKEND=mysql`）。之后改环境变量不会自动改库内密码，除非设 `AUTH_BOOTSTRAP_RESET_ADMIN=true` 再重启一次。`.env` 里需要有 `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`；Compose 会把 `MYSQL_HOST` 覆盖为服务名 `mysql`。
 
 前端构建：同源反代 `/api` 时 `VITE_API_BASE` 可留空或设为 `https://你的域名`。

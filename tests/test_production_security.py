@@ -77,6 +77,7 @@ def test_bind_session_rejects_other_tenant():
 
 
 def test_user_store_authenticate(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUTH_BACKEND", "sqlite")
     monkeypatch.setenv("AUTH_USERS_DB_PATH", str(tmp_path / "users.db"))
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin123456")
