@@ -36,6 +36,10 @@ export interface ChatRequest {
   workspace_root?: string;
   /** 本轮已打开的文件内容（避免大文件塞进 message） */
   files?: WorkspaceFileDTO[];
+  /** 本轮要测的网站 origin，如 https://example.com */
+  e2e_base_url?: string;
+  /** 该站点测试文档的知识库租户 id */
+  qa_tenant_id?: string;
 }
 
 // LlmSettings：localStorage 里保存的模型凭证结构

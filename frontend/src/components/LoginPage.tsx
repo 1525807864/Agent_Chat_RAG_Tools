@@ -8,6 +8,7 @@ import { useState } from "react";
 import { postLogin } from "../api/endpoints";
 // 把 JWT 写入 localStorage，后续 apiJson / 上传 / SSE 会自动带 Bearer
 import { saveToken } from "../auth/token";
+import { IcpFooter } from "./IcpFooter";
 
 /** 登录成功后由父组件切到主界面 */
 type LoginPageProps = {
@@ -52,53 +53,55 @@ export function LoginPage({ onLoggedIn }: LoginPageProps) {
   };
 
   return (
-    // 铺满窗口的浅底，卡片垂直水平居中
+    // 铺满窗口：中间登录卡，底部备案号
     <div className="login-page">
-      <form
-        className="login-card"
-        // 回车也能提交；阻止浏览器默认刷新
-        onSubmit={(e) => {
-          e.preventDefault();
-          void onSubmit();
-        }}
-      >
-        <div className="login-card-brand">
-          <span className="app-header-dot" aria-hidden="true" />
-          <h1 className="login-card-title">LangChain Demo Agent</h1>
-        </div>
-        <p className="muted login-card-hint">登录后使用对话、知识库与设置</p>
+      <div className="login-page-main">
+        <form
+          className="login-card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSubmit();
+          }}
+        >
+          <div className="login-card-brand">
+            <span className="app-header-dot" aria-hidden="true" />
+            <h1 className="login-card-title">LangChain Demo Agent</h1>
+          </div>
+          <p className="muted login-card-hint">登录后使用对话、知识库与设置</p>
 
-        <label className="muted" htmlFor="login-user">
-          用户名
-        </label>
-        <input
-          id="login-user"
-          className="login-page-input"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          autoComplete="username"
-          disabled={busy}
-        />
+          <label className="muted" htmlFor="login-user">
+            用户名
+          </label>
+          <input
+            id="login-user"
+            className="login-page-input"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            disabled={busy}
+          />
 
-        <label className="muted" htmlFor="login-pass">
-          密码
-        </label>
-        <input
-          id="login-pass"
-          className="login-page-input"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-          disabled={busy}
-        />
+          <label className="muted" htmlFor="login-pass">
+            密码
+          </label>
+          <input
+            id="login-pass"
+            className="login-page-input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={busy}
+          />
 
-        {err && <div className="error-banner login-page-err">{err}</div>}
+          {err && <div className="error-banner login-page-err">{err}</div>}
 
-        <button type="submit" className="btn primary login-page-btn" disabled={busy}>
-          {busy ? "登录中…" : "登录"}
-        </button>
-      </form>
+          <button type="submit" className="btn primary login-page-btn" disabled={busy}>
+            {busy ? "登录中…" : "登录"}
+          </button>
+        </form>
+      </div>
+      <IcpFooter />
     </div>
   );
 }

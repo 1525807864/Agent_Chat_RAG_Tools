@@ -81,6 +81,8 @@ async def _dispatch(
             workspace_root=req.workspace_root,
             files=req.files,
             active_file=active_file,
+            e2e_base_url=req.e2e_base_url,
+            qa_tenant_id=req.qa_tenant_id,
             **llm_kwargs,
         )
         LEDGER.add(tenant_id, requests=1)

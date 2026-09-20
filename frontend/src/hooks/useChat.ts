@@ -32,6 +32,8 @@ export function useChat(llmSettings?: LlmSettings) {
   const [mode, setMode] = useState<Mode>("chat");
   const [multiMode, setMultiMode] = useState<MultiMode>("sequential");
   const [agentName, setAgentName] = useState("assistant");
+  const [e2eBaseUrl, setE2eBaseUrl] = useState("");
+  const [qaTenantId, setQaTenantId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [useStream, setUseStream] = useState(true);
@@ -86,6 +88,8 @@ export function useChat(llmSettings?: LlmSettings) {
           path: f.path,
           content: f.content,
         })),
+        e2e_base_url: e2eBaseUrl.trim() || undefined,
+        qa_tenant_id: qaTenantId.trim() || undefined,
       };
 
       try {
@@ -168,7 +172,7 @@ export function useChat(llmSettings?: LlmSettings) {
         abortRef.current = null;
       }
     },
-    [agentName, loading, llmSettings, mode, multiMode, sessionId, useStream],
+    [agentName, e2eBaseUrl, loading, llmSettings, mode, multiMode, qaTenantId, sessionId, useStream],
   );
 
   const switchSession = useCallback((id: string) => {
@@ -191,6 +195,10 @@ export function useChat(llmSettings?: LlmSettings) {
     setMultiMode,
     agentName,
     setAgentName,
+    e2eBaseUrl,
+    setE2eBaseUrl,
+    qaTenantId,
+    setQaTenantId,
     loading,
     error,
     useStream,

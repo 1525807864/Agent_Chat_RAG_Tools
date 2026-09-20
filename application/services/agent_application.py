@@ -34,7 +34,7 @@ from memory.facade import MemoryFacade
 from memory.session_store import create_session_store
 from rag.document_loader import DocumentLoader
 from rag.knowledge_graph import GraphRAGRetriever, KnowledgeGraph
-from rag.rag_chain import create_graph_rag_chain, create_rag_chain
+from rag.rag_chain import create_graph_rag_chain
 from rag.vector_store import VectorStoreManager
 from safety.content_filter import ContentFilter
 from safety.rate_limiter import AsyncRateLimiter
@@ -366,6 +366,19 @@ class AgentApplication:
         count = store.add_documents(docs)
         self.logger.info("知识库构建完成, tenant=%s chunks=%s", tenant_id, count)
 
+        # 同步构建 BM25 稀疏索引（与向量库同一批 docs）
+        from application.tenancy import tenant_bm25_path
+        from rag.sparse_bm25 import BM25SparseIndex
+
+        bm25 = BM25SparseIndex()
+        bm25.build(docs)
+        bm25_path = tenant_bm25_path(self.project_root, tenant_id)
+        try:
+            bm25.save(bm25_path)
+            self.logger.info("BM25 索引已保存: %s (n=%s)", bm25_path, bm25.size)
+        except Exception as e:
+            self.logger.warning("BM25 保存失败: %s", e)
+
         max_chars = self.settings.graph_extract_max_chars
         for doc in docs:
             graph.extract_triples_with_llm(
@@ -567,9 +580,19 @@ class AgentApplication:
         api_base: str | None = None,
         model_name: str | None = None,
     ) -> tuple[str, list[dict]]:
-        """向量检索 RAG，返回 (answer, sources)。"""
+        """混合检索 RAG：路由 →（稠密∪BM25 + RRF）→ Prompt → LLM。
+
+        返回 (answer, sources)；sources 附带 route / rrf_score / dense_rank / sparse_rank。
+        """
         from billing.usage import LEDGER
         from observability.tracing import trace
+        from langchain_core.output_parsers import StrOutputParser
+
+        from application.tenancy import tenant_bm25_path
+        from rag.hybrid_retriever import HybridRetriever
+        from rag.query_router import RouteDecision, route_query
+        from rag.rag_chain import RAG_PROMPT, format_docs
+        from rag.sparse_bm25 import BM25SparseIndex
 
         blocked = await self.security.guard(question, rate_limit=True)
         if blocked:
@@ -577,22 +600,58 @@ class AgentApplication:
 
         llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
         store = self._vector_store_for_tenant(tenant_id)
-        try:
-            docs = store.similarity_search(question, k=self.settings.retrieval_top_k)
-        except Exception as e:
-            self.logger.error("RAG 检索失败: %s", e)
-            return f"问答出错: {sanitize_exception_message(e)}", []
+        bm25 = BM25SparseIndex.load(tenant_bm25_path(self.project_root, tenant_id))
 
-        sources = self._docs_to_sources(docs)
-        retriever = store.get_or_create_store().as_retriever(
-            search_kwargs={"k": self.settings.retrieval_top_k}
+        if self.settings.hybrid_use_router:
+            decision = route_query(question)
+        else:
+            decision = RouteDecision("hybrid", "router 关闭，强制 hybrid")
+
+        if not self.settings.hybrid_retrieval_enabled:
+            decision = RouteDecision("dense", "HYBRID_RETRIEVAL_ENABLED=false")
+
+        retriever = HybridRetriever(
+            store,
+            bm25,
+            top_k=self.settings.retrieval_top_k,
+            fetch_k=self.settings.hybrid_fetch_k,
+            rrf_k=self.settings.hybrid_rrf_k,
+            mode=decision.strategy,
         )
-        chain = create_rag_chain(llm, retriever)
+
+        sources: list[dict] = []
         try:
-            result = chain.invoke({"question": question})
+            hits = retriever.retrieve(question)
+            docs = [h.doc for h in hits]
+            sources = self._docs_to_sources(docs)
+            for i, h in enumerate(hits):
+                if i < len(sources):
+                    sources[i]["rrf_score"] = round(h.rrf_score, 6)
+                    sources[i]["dense_rank"] = h.dense_rank
+                    sources[i]["sparse_rank"] = h.sparse_rank
+                    sources[i]["route"] = decision.strategy
+            context = format_docs(docs)
+        except Exception as e:
+            self.logger.error("混合检索失败，回退纯向量: %s", e)
+            try:
+                docs = store.similarity_search(question, k=self.settings.retrieval_top_k)
+            except Exception as e2:
+                return f"问答出错: {sanitize_exception_message(e2)}", []
+            sources = self._docs_to_sources(docs)
+            context = format_docs(docs)
+
+        try:
+            chain = RAG_PROMPT | llm | StrOutputParser()
+            result = chain.invoke({"context": context, "question": question})
             answer = result if isinstance(result, str) else str(result)
             LEDGER.add(tenant_id, requests=1)
-            trace("rag_ask", tenant_id=tenant_id, hits=len(sources))
+            trace(
+                "rag_ask_hybrid",
+                tenant_id=tenant_id,
+                hits=len(sources),
+                route=decision.strategy,
+                reason=decision.reason,
+            )
             return answer, sources
         except Exception as e:
             self.logger.error("RAG 问答失败: %s", e)
@@ -681,10 +740,14 @@ class AgentApplication:
         workspace_root: str | None = None,
         files: list | None = None,
         active_file: str | None = None,
+        e2e_base_url: str | None = None,
+        qa_tenant_id: str | None = None,
     ) -> str:
         """运行 ReAct Agent；若带 workspace_root 则注入工作区读写工具。
 
         支持 slash Skills：``/explain ...`` 会把技能正文拼进 system_prompt。
+        ``e2e_base_url`` 或 ``/e2e`` 时接入 Playwright MCP 浏览器工具（不写 spec）；
+        ``qa_tenant_id`` 预检索暂关。
         """
         blocked = await self.security.guard(task, rate_limit=True)
         if blocked:
@@ -729,9 +792,24 @@ class AgentApplication:
             model_name=skill_model or model_name,
             temperature=skill_temp,
         )
+
+        # 是否进入 E2E：显式 base_url，或 /e2e / 技能名 e2e
+        locked = (e2e_base_url or "").strip()
+        skill_name = ""
+        if resolved is not None:
+            cmd = getattr(resolved, "command", None)
+            skill_name = (getattr(cmd, "name", None) or "").strip()
+        e2e_mode = bool(
+            locked
+            or skill_name == "e2e"
+            or (task or "").lstrip().startswith("/e2e")
+        )
+
         tools = list(self.tool_registry.get_all_tools())
         system_prompt = None
-        if workspace_root:
+        max_calls = 16
+
+        if workspace_root and not e2e_mode:
             try:
                 tools = tools + make_workspace_tools(workspace_root)
                 system_prompt = (
@@ -754,8 +832,10 @@ class AgentApplication:
             except Exception as e:
                 self.logger.warning("注入工作区工具失败: %s", e)
 
-        if skill_extra:
-            # ReAct 的 system_prompt 含 {tools_description} 占位；技能说明追加在末尾
+        # 测试知识库 RAG：暂关（缺 EMBEDDING_API_KEY 时会挡 E2E）
+        # if (qa_tenant_id or "").strip(): ...
+
+        if skill_extra and not e2e_mode:
             if system_prompt:
                 system_prompt = system_prompt + skill_extra
             else:
@@ -765,9 +845,47 @@ class AgentApplication:
                     + skill_extra
                 )
 
-        # 技能已展开时，用 effective_task；仍附上打开文件上下文
         prefix = self._build_files_prefix(files)
         full_task = prefix + "用户请求：\n" + effective_task
+
+        # ---- E2E：有状态 Playwright MCP（官方工具，不写 spec）----
+        if e2e_mode:
+            from e2e.mcp_playwright import e2e_system_hint, playwright_mcp_session
+
+            hint = e2e_system_hint(
+                locked_url=locked or None,
+                user=(self.settings.e2e_user or "").strip(),
+                password=(self.settings.e2e_password or "").strip(),
+            )
+            if skill_extra:
+                hint = hint + skill_extra
+            system_prompt = (
+                "你是 E2E 测试助手，使用 ReAct。可用工具:\n\n{tools_description}\n\n"
+                "格式: Thought / Action / Action Input / Observation / Final Answer\n"
+                + hint
+            )
+            max_calls = 24
+            try:
+                async with playwright_mcp_session(locked_url=locked or None) as mcp_tools:
+                    agent = ReActAgent(
+                        name=agent_name,
+                        role="E2E测试助手",
+                        llm=llm,
+                        tools=list(mcp_tools),
+                        system_prompt=system_prompt,
+                        max_tool_calls=max_calls,
+                    )
+                    result = await agent.run(full_task)
+                    return result.get("result", "无结果")
+            except Exception as e:  # noqa: BLE001
+                self.logger.error("Playwright MCP 失败: %s", e)
+                return f"E2E 启动失败: {sanitize_exception_message(e)}"
+
+        if system_prompt is None:
+            system_prompt = (
+                "你是通用助手，使用 ReAct 框架。可用工具:\n\n{tools_description}\n\n"
+                "请按 Thought/Action/Action Input/Observation/Final Answer 格式响应。"
+            )
 
         agent = ReActAgent(
             name=agent_name,
@@ -775,7 +893,7 @@ class AgentApplication:
             llm=llm,
             tools=tools,
             system_prompt=system_prompt,
-            max_tool_calls=16 if workspace_root else 10,
+            max_tool_calls=max_calls,
         )
         result = await agent.run(full_task)
         return result.get("result", "无结果")

@@ -35,3 +35,9 @@ def tenant_graph_path(project_root: Path, tenant_id: str) -> Path:
 def tenant_docs_dir(project_root: Path, tenant_id: str) -> Path:
     """返回示例: .../data/tenants/acme/docs"""
     return tenant_root(project_root, tenant_id) / "docs"
+
+def tenant_bm25_path(project_root:Path,tenant_id:str)->Path:
+    """
+    租户BM25索引文件路径
+    """
+    return tenant_root(project_root,tenant_id) / "bm25_index.json"

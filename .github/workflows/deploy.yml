@@ -1,0 +1,33 @@
+# 推送到 main 后 SSH 到阿里云执行 deploy/update.sh。
+# 仓库 Settings → Secrets and variables → Actions 需要：
+#   DEPLOY_HOST      例如 39.106.64.240
+#   DEPLOY_USER      例如 root
+#   DEPLOY_SSH_KEY   部署用私钥全文（不要用日常登录密钥）
+#
+# 本地先不要 push。在服务器上先手动：
+#   bash /opt/LangChain_Demo/deploy/update.sh
+# 或本仓库目录试重建（不拉远程）：
+#   APP_DIR="$(pwd)" SKIP_GIT=1 bash deploy/update.sh
+
+name: Deploy to Aliyun
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          command_timeout: 35m
+          script: |
+            bash /opt/LangChain_Demo/deploy/update.sh

@@ -65,11 +65,13 @@ class DocumentLoader:
     def _load_pdf(self, path: Path) -> list[Document]:
         """PDF：用 PyPDFLoader 读页并按 chunk 切分。"""
         from langchain_community.document_loaders import PyPDFLoader
-        loader = PyPDFLoader(str(path))
-        return loader.load_and_split(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        pages = PyPDFLoader(str(path)).load()
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size = self.chunk_size,
+            chunk_overlap = self.chunk_overlap,
         )
+        return splitter.split_documents(pages)
     def _load_text(self, path: Path) -> list[Document]:
         """纯文本 / Markdown：整文件读入再按分隔符递归切分。"""
         from langchain_text_splitters import RecursiveCharacterTextSplitter

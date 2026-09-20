@@ -18,6 +18,10 @@ type Props = {
   setMultiMode: (m: MultiMode) => void; // 改子模式
   agentName: string; // agent 名
   setAgentName: (n: string) => void; // 改 agent 名
+  e2eBaseUrl: string;
+  setE2eBaseUrl: (n: string) => void;
+  qaTenantId: string;
+  setQaTenantId: (n: string) => void;
   useStream: boolean; // 是否 SSE
   setUseStream: (v: boolean) => void; // 切换 SSE
   healthLabel: string; // 探活文案
@@ -32,6 +36,10 @@ export function ModeBar({
   setMultiMode,
   agentName,
   setAgentName,
+  e2eBaseUrl,
+  setE2eBaseUrl,
+  qaTenantId,
+  setQaTenantId,
   useStream,
   setUseStream,
   healthLabel,
@@ -72,15 +80,37 @@ export function ModeBar({
 
       {/* 仅 agent 显示名称输入 */}
       {mode === "agent" && (
-        <label>
-          agent_name
-          <input
-            type="text" // 文本框
-            value={agentName} // 受控
-            onChange={(e) => setAgentName(e.target.value)} // 更新
-            style={{ width: 120 }} // 固定宽度
-          />
-        </label>
+        <>
+          <label>
+            agent_name
+            <input
+              type="text"
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              style={{ width: 120 }}
+            />
+          </label>
+          <label>
+            e2e_base_url
+            <input
+              type="url"
+              placeholder="https://被测站点"
+              value={e2eBaseUrl}
+              onChange={(e) => setE2eBaseUrl(e.target.value)}
+              style={{ width: 200 }}
+            />
+          </label>
+          <label>
+            qa_tenant_id
+            <input
+              type="text"
+              placeholder="qa-acme"
+              value={qaTenantId}
+              onChange={(e) => setQaTenantId(e.target.value)}
+              style={{ width: 100 }}
+            />
+          </label>
+        </>
       )}
 
       {/* SSE 开关 */}

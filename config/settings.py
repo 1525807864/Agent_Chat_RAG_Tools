@@ -21,10 +21,6 @@ auth_backend / memory_backend
 ``Settings.memory_backend`` 默认 ``redis``（聊天会话）。本地若没有 Redis，
 请在 ``.env`` 中显式设置 ``MEMORY_BACKEND=sqlite``。
 API 依赖层（``api.deps``）**不会**自动改写该配置，以免掩盖生产误配。
-
-安全
-====
-切勿把真实 API Key 写进本文件或注释；只从环境变量加载。
 """
 
 # 集中管理所有配置参数
@@ -188,6 +184,7 @@ class Settings(BaseSettings):
     )
     embedding_model: str = Field(
         default="text-embedding-3-small",
+        alias="EMBEDDING_MODEL",
     )
     vector_db_path:str = Field(
         default="data/vector_store",
@@ -197,6 +194,28 @@ class Settings(BaseSettings):
         ge=1,
         le=20
     )
+    # 混合检索 (稠密+BM25+RRF)；与 .env 的 HYBRID_RETRIEVAL_ENABLED 对齐
+    hybrid_retrieval_enabled: bool = Field(
+        default=True,  # 本地建议开启；出问题可设 false 回退纯向量
+        alias="HYBRID_RETRIEVAL_ENABLED",
+    )
+    hybrid_fetch_k: int = Field(
+        default=10,  # 每一路先取多少再融合，应 >= retrieval_top_k
+        ge=1,
+        le=50,
+        alias="HYBRID_FETCH_K",
+    )
+    hybrid_rrf_k: int = Field(
+        default=60,  # RRF 经典常数
+        ge=1,
+        le=200,
+        alias="HYBRID_RRF_K",
+    )
+    hybrid_use_router: bool = Field(
+        default=True,  # 是否启用 query_router；false 则永远 hybrid
+        alias="HYBRID_USE_ROUTER",
+    )
+
     # GraphRAG：图谱落盘路径、BFS 跳数、构建时抽取文本截断长度
     knowledge_graph_path: str = Field(
         default="data/knowledge_graph.json",
@@ -220,6 +239,24 @@ class Settings(BaseSettings):
     tool_workspace_root: str = Field(
         default="data/workspace",
     )
+    #是否允许e2e打localhost,生成必须false
+    e2e_allow_local: bool = Field(default=False,alias="E2E_ALLOW_LOCAL")
+    e2e_root: str = Field(default="data/e2e",alias="E2E_ROOT")
+    e2e_timeout_sec: int = Field(
+        default=120,
+        alias="E2E_TIMEOUT_SECONDS",
+        ge=30,
+        le=600,
+    )
+    e2e_user: str = Field(default="", alias="E2E_USER")
+    e2e_password: str = Field(default="", alias="E2E_PASSWORD")
+    # Playwright MCP：command + 逗号分隔 args（默认 npx -y @playwright/mcp@latest --headless）
+    e2e_mcp_command: str = Field(default="npx", alias="E2E_MCP_COMMAND")
+    e2e_mcp_args: str = Field(
+        default="-y,@playwright/mcp@latest,--headless",
+        alias="E2E_MCP_ARGS",
+    )
+
     #搜索配置
     tavily_api_key:str = Field(
         default="",

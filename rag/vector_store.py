@@ -55,9 +55,13 @@ class VectorStoreManager:
 
         return self._store
 
-    def add_documents(self, docs: list[Document]) -> int:
+    def add_documents(self, docs: list[Document],batch_size:int=10) -> int:
         store = self.get_or_create_store()
-        store.add_documents(docs)
+        if not docs:
+            return 0 
+        size = max(1,min(batch_size,64))
+        for i in range(0,len(docs),size):
+            store.add_documents(docs[i:i+size])
         return len(docs)
 
     def similarity_search(

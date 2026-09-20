@@ -12,6 +12,10 @@ function resolveApiBase(): string {
   // 桌面与网页共用云 API：Vite 里配的 VITE_API_BASE 优先，避免 preload 默认 127.0.0.1
   if (fromEnv) return fromEnv;
   if (fromElectron) return fromElectron;
+  // 网页由 Nginx 同源反代 /api；空 base 让 fetch("/api/...") 打到当前域名
+  if (typeof window !== "undefined" && !window.electronAPI) {
+    return "";
+  }
   return "http://127.0.0.1:8020";
 }
 

@@ -95,9 +95,25 @@ async def delete_session(
     user: AuthUser = Depends(get_current_user),
     app: AgentApplication = Depends(get_agent_app),
 ) -> dict:
+    """删除一条会话。
+
+    库里可能有两种 id：
+    - 新数据：``default::web-xxx``（chat 路由写入前 bind 过）
+    - 旧数据：``web-xxx`` / ``explain-xxx``（没有租户前缀）
+
+    列表对 default 租户会把无前缀 id 原样返回。
+    若只删 bind 后的 id，旧行删不到，接口仍返回 200，列表看起来没变化。
+    """
     scoped = bind_session_id(user.tenant_id, session_id)
+    # 先删带租户前缀的行
+    targets = [scoped]
+    # 无前缀、且属于当前租户（default 的旧数据）时，再删原始 id
+    raw = session_id.strip()
+    if raw and raw != scoped and public_session_id(user.tenant_id, raw) == raw:
+        targets.append(raw)
     try:
-        await app.delete_session(scoped)
+        for sid in targets:
+            await app.delete_session(sid)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return {

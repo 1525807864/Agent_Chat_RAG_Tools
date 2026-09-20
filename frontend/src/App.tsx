@@ -24,7 +24,7 @@ import { useWorkspace } from "./hooks/useWorkspace";
 import { clearToken, loadToken } from "./auth/token";
 import type { FileTreeNode } from "./types/attachment";
 import type { UiMessage } from "./types/api";
-
+import { IcpFooter } from "./components/IcpFooter";
 /**
  * ChatBubbleIcon：消息气泡 SVG 图标
  * --------------------------------
@@ -80,6 +80,10 @@ export default function App() {
     setMultiMode,
     agentName,
     setAgentName,
+    e2eBaseUrl,
+    setE2eBaseUrl,
+    qaTenantId,
+    setQaTenantId,
     loading,
     error,
     useStream,
@@ -288,6 +292,10 @@ export default function App() {
             setMultiMode={setMultiMode}
             agentName={agentName}
             setAgentName={setAgentName}
+            e2eBaseUrl={e2eBaseUrl}
+            setE2eBaseUrl={setE2eBaseUrl}
+            qaTenantId={qaTenantId}
+            setQaTenantId={setQaTenantId}
             useStream={useStream}
             setUseStream={setUseStream}
             healthLabel={healthLabel}
@@ -338,6 +346,7 @@ export default function App() {
           <KnowledgePanel />
         </div>
       </div>
+      <IcpFooter />
     </div>
   );
 }

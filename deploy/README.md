@@ -29,3 +29,27 @@
 首次启动会把 `ADMIN_USERNAME` / `ADMIN_PASSWORD` **哈希后写入** MySQL `users` 表（`AUTH_BACKEND=mysql`）。之后改环境变量不会自动改库内密码，除非设 `AUTH_BOOTSTRAP_RESET_ADMIN=true` 再重启一次。`.env` 里需要有 `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`；Compose 会把 `MYSQL_HOST` 覆盖为服务名 `mysql`。
 
 前端构建：同源反代 `/api` 时 `VITE_API_BASE` 可留空或设为 `https://你的域名`。
+
+## 自动部署（GitHub Actions）
+
+生产机不要装 Jenkins。推送 `main` 后由 Actions SSH 执行 `deploy/update.sh`。
+
+1. 在服务器把脚本设为可执行：`chmod +x /opt/LangChain_Demo/deploy/update.sh`
+2. GitHub 仓库 Secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`
+3. **先本地 / 服务器手工测脚本，确认没问题再 push workflow**
+
+本地（Git Bash / WSL，且本机已能 `docker compose`）：
+
+```bash
+# 只检查脚本语法
+bash -n deploy/update.sh
+
+# 不拉 GitHub、不 reset，只按当前目录重建容器
+APP_DIR="$(pwd)" SKIP_GIT=1 bash deploy/update.sh
+```
+
+服务器（会 `git reset --hard` 到远程 `main`，`.env` 不受影响）：
+
+```bash
+bash /opt/LangChain_Demo/deploy/update.sh
+```

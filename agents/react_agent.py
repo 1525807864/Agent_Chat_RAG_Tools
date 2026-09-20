@@ -159,6 +159,7 @@ class ReActAgent(BaseAgent):
         return None
 
     def _invoke_tool(self, tool: BaseTool, action_input: dict | None) -> str:
+        """同步调用（web_search 等本地工具）。"""
         payload = self._normalize_tool_input(tool, action_input)
         try:
             result = tool.invoke(payload)
@@ -168,6 +169,25 @@ class ReActAgent(BaseAgent):
             if tool.name == "web_search" and "query" in payload:
                 try:
                     return str(tool.invoke(payload["query"]))
+                except Exception as e2:
+                    return f"工具调用失败: {e2}"
+            return f"工具调用失败: {e}"
+
+    async def _ainvoke_tool(self, tool: BaseTool, action_input: dict | None) -> str:
+        """异步调用；MCP / Playwright 工具必须走 ainvoke，否则会话会断。"""
+        import asyncio
+
+        payload = self._normalize_tool_input(tool, action_input)
+        try:
+            if hasattr(tool, "ainvoke"):
+                result = await tool.ainvoke(payload)
+            else:
+                result = await asyncio.to_thread(tool.invoke, payload)
+            return str(result)
+        except Exception as e:
+            if tool.name == "web_search" and "query" in payload:
+                try:
+                    return str(await asyncio.to_thread(tool.invoke, payload["query"]))
                 except Exception as e2:
                     return f"工具调用失败: {e2}"
             return f"工具调用失败: {e}"
@@ -321,7 +341,7 @@ class ReActAgent(BaseAgent):
 
             tool = self._get_tool_by_name(action_name)
             if tool:
-                obs = self._invoke_tool(tool, action_input)
+                obs = await self._ainvoke_tool(tool, action_input)
                 tool_calls_log.append(
                     {
                         "iteration": iteration,

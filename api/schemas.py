@@ -89,6 +89,18 @@ class ChatRequest(BaseModel):
         default=None,
         description="本轮打开的工作区文件",
     )
+    #被测网站origin；为空则不启用e2e工具
+    e2e_base_url: Optional[str] = Field(
+        default=None,
+        max_length=512,
+        description="被测网站origin；为空则不启用e2e工具",
+    )
+    #该站点测试文档所在租户向量库；空则不预检索
+    qa_tenant_id: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="该站点测试文档所在租户向量库；空则不预检索",
+    )
 
 
 class ChatResponse(BaseModel):

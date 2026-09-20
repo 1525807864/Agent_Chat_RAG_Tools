@@ -11,6 +11,7 @@ openai>=1.50.0
 chromadb>=0.5.0
 faiss-cpu>=1.9.0
 tiktoken>=0.7.0
+rank_bm25>=0.2.2
 
 # ===== 文档加载与解析 =====
 pypdf>=5.0.0
@@ -35,6 +36,9 @@ pydantic-settings>=2.0.0
 
 # ===== 工具增强 =====
 httpx>=0.27.0
+langchain-mcp-adapters>=0.1.0
+mcp>=1.0.0
+
 
 # ===== 环境与配置 =====
 python-dotenv>=1.0.0
