@@ -11,7 +11,7 @@ export function IcpFooter() {
             ©2026 John.Lee
         </span>
         <span>
-            京ICP备2026XXXXXX号-1
+            京ICP备2026063907号
         </span>
       </a>
     </footer>
