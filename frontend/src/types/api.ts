@@ -3,7 +3,7 @@
 // ============================================================================
 
 // Mode：对话主模式，须与后端 schemas.Mode、/health.modes 同步
-export type Mode = "chat" | "rag" | "graph-rag" | "agent" | "multi";
+export type Mode = "chat" | "rag" | "graph-rag" | "agent" | "multi" | "consult";
 
 // MultiMode：仅 mode=multi 时有意义的子模式
 export type MultiMode = "sequential" | "debate" | "router";
@@ -101,6 +101,20 @@ export interface BuildKBResponse {
   // 人类可读说明
   message: string;
 }
+//GET /api/knowledge/build/{job_id}的任务状态
+export interface KbJobResponse {
+  job_id: string; // 轮询用的任务 id
+  tenant_id: string; // 属于哪个租户
+  doc_dir: string; // 建库目录
+  status: string; // queued / running / done / failed
+  progress: number; // 0 到 100
+  message: string; // 给人看的短说明
+  chunk_count: number; // 成功时的切块数
+  error?: string | null; // 失败原因，成功时为空
+
+}
+
+
 
 //上传接口返回
 export interface UploadDocResponse {

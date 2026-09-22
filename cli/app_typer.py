@@ -43,6 +43,11 @@ def ask(
         if mode == "rag":
             answer, sources = await agent.ask_rag(message, tenant_id=tenant_id)
             return {"answer": answer, "sources": sources}
+        if mode == "consult":
+            answer, sources = await agent.ask_consult(
+                message, tenant_id=tenant_id, session_id=session_id
+            )
+            return {"answer": answer, "sources": sources}
         if mode == "graph-rag":
             answer, sources = await agent.ask_graph_rag(message, tenant_id=tenant_id)
             return {"answer": answer, "sources": sources}

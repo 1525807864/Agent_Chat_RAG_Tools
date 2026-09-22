@@ -41,3 +41,14 @@ def tenant_bm25_path(project_root:Path,tenant_id:str)->Path:
     租户BM25索引文件路径
     """
     return tenant_root(project_root,tenant_id) / "bm25_index.json"
+
+def tenant_factor_records_path(project_root: Path, tenant_id: str) -> Path:
+    """建库抽出的因子记录。例：data/tenants/acme/factor_records.json"""
+    return tenant_root(project_root, tenant_id) / "factor_records.json"
+
+
+def tenant_factor_session_path(project_root: Path, tenant_id: str, session_id: str) -> Path:
+    """某个会话已经填上的因子。session_id 里的分隔符换成下划线，避免路径穿越。"""
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (session_id or "default"))
+    folder = tenant_root(project_root, tenant_id) / "factor_sessions"  # 一会话一个文件
+    return folder / f"{safe or 'default'}.json"

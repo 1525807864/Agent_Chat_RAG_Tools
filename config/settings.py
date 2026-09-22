@@ -47,6 +47,9 @@ SEARCH_TIMEOUT = int(os.getenv("SEARCH_TIMEOUT",5))
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY","")
+# Cursor SDK 不传 api_key 时也会读这个环境变量；空字符串表示未配置。
+CURSOR_API_KEY = os.getenv("CURSOR_API_KEY", "")
+CURSOR_MODEL = os.getenv("CURSOR_MODEL", "composer-2.5")
 #记忆配置
 MEMORY_WINDOW_SIZE = 10
 
@@ -262,6 +265,17 @@ class Settings(BaseSettings):
         default="",
         alias="TAVILY_API_KEY",
         description="Tavily Search API Key:空则web_search会提示未配置",
+    )
+    # Cursor Agent SDK。改代码的 chat/agent 会分配到这里；RAG 仍走 DeepSeek。
+    cursor_api_key: str = Field(
+        default="",
+        alias="CURSOR_API_KEY",
+        description="Cursor 用户密钥或 Service account；Team Admin key 不可用",
+    )
+    cursor_model: str = Field(
+        default="composer-2.5",
+        alias="CURSOR_MODEL",
+        description="本地 Agent 必填模型；composer-2.5 或 auto",
     )
     search_result_limit: int = Field(
         default=5,

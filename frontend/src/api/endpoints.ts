@@ -17,6 +17,7 @@ import type {
   SessionHistoryResponse, // 会话历史
   SessionListResponse, // 会话列表
   UploadDocResponse, // 上传文档响应
+  KbJobResponse, // 建库任务状态
 } from "../types/api";
 
 // GET /health：探活
@@ -65,6 +66,20 @@ export function buildKnowledge(body: BuildKBRequest = {}) {
     body: JSON.stringify(body), // JSON 体
   });
 }
+// POST /api/knowledge/build/async:异步建库，返回 job_id
+export function startKnowledgeBuild() {
+  return apiJson<{ job_id: string }>("/api/knowledge/build/async", {
+    method: "POST", //创建一个后台任务
+    body: JSON.stringify({}), //目录由后端按当前租户自动选择
+  });
+}
+// GET /api/knowledge/build/{job_id}:轮询建库状态
+export function getKnowledgeBuild(jobId: string) {
+  return apiJson<KbJobResponse>(
+    `/api/knowledge/build/${encodeURIComponent(jobId)}`
+  );
+}
+
 
 // GET /api/knowledge/docs：列出当前租户已上传文件
 export function listKnowledgeDocs() {

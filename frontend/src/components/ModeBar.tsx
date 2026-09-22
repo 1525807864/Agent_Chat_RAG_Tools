@@ -6,7 +6,7 @@
 import type { Mode, MultiMode } from "../types/api";
 
 // 主模式下拉选项（与后端 Mode 对齐）
-const MODES: Mode[] = ["chat", "rag", "graph-rag", "agent", "multi"];
+const MODES: Mode[] = ["chat", "rag", "graph-rag", "agent", "multi", "consult"];
 // multi 子模式选项
 const MULTI_MODES: MultiMode[] = ["sequential", "debate", "router"];
 

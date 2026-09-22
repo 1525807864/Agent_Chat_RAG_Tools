@@ -12,6 +12,7 @@ from api.auth.deps import AuthUser, get_current_user
 from api.auth.session_scope import bind_session_id
 from api.deps import get_agent_app
 from api.schemas import ChatRequest, ChatResponse
+from application.routing.handoff import try_cursor_answer
 from application.services.agent_application import AgentApplication
 from billing.usage import LEDGER
 from observability.tracing import new_request_id, set_request_id, trace
@@ -25,6 +26,24 @@ def _scoped_chat_request(req: ChatRequest, user: AuthUser) -> ChatRequest:
     return req.model_copy(
         update={"session_id": bind_session_id(user.tenant_id, req.session_id)}
     )
+
+
+async def _persist_turn(app: AgentApplication, session_id: str, user_input: str, answer: str) -> None:
+    """Cursor 分支不经过 ask_chat，这里单独落库，会话列表才能用最后一句当标题。"""
+    try:
+        if app.memory is None:
+            await app.init_session_store()
+        if app.memory is not None:
+            await app.memory.persist_turn(
+                session_id=session_id,
+                user_input=user_input,
+                assistant_output=answer,
+            )
+        elif app.session_store:
+            await app.session_store.add_message(session_id, "user", user_input)
+            await app.session_store.add_message(session_id, "assistant", answer)
+    except Exception as exc:  # noqa: BLE001
+        trace("cursor_persist_fail", error=str(exc))
 
 
 async def _dispatch(
@@ -49,6 +68,24 @@ async def _dispatch(
         )
 
     extra: dict = {}
+    # 先问分配器。None 表示这条仍走下面的 DeepSeek 分支。
+    settings = app.settings
+    cursor_hit = await try_cursor_answer(
+        mode=req.mode,
+        message=req.message,
+        session_id=req.session_id,
+        tenant_id=tenant_id,
+        api_key=settings.cursor_api_key,
+        model=settings.cursor_model,
+        workspace_root=req.workspace_root,
+    )
+    if cursor_hit is not None:
+        answer, cursor_meta = cursor_hit
+        extra.update(cursor_meta)
+        await _persist_turn(app, req.session_id, req.message, answer)
+        LEDGER.add(tenant_id, requests=1)
+        return answer, extra
+
     if req.mode == "chat":
         answer = await app.ask_chat(
             req.message,
@@ -63,6 +100,16 @@ async def _dispatch(
     if req.mode == "rag":
         answer, sources = await app.ask_rag(
             message, tenant_id=tenant_id, **llm_kwargs
+        )
+        extra["sources"] = sources
+        return answer, extra
+
+    if req.mode == "consult":
+        answer, sources = await app.ask_consult(
+            message,
+            tenant_id=tenant_id,
+            session_id=req.session_id,
+            **llm_kwargs,
         )
         extra["sources"] = sources
         return answer, extra
@@ -171,8 +218,26 @@ async def chat_stream(
                 f"{json.dumps(start_payload, ensure_ascii=False)}\n\n"
             )
 
+            # 流式 chat 不经过 _dispatch，这里要单独问一次分配器。
+            cursor_hit = await try_cursor_answer(
+                mode=req.mode,
+                message=req.message,
+                session_id=scoped.session_id,
+                tenant_id=user.tenant_id,
+                api_key=app.settings.cursor_api_key,
+                model=app.settings.cursor_model,
+                workspace_root=req.workspace_root,
+            )
+            if cursor_hit is not None:
+                answer, _meta = cursor_hit
+                await _persist_turn(app, scoped.session_id, req.message, answer)
+                LEDGER.add(user.tenant_id, requests=1)
+                yield (
+                    f"event: message\ndata: "
+                    f"{json.dumps({'delta': answer, 'done': False}, ensure_ascii=False)}\n\n"
+                )
             # chat 模式：直接 astream LLM（无 skills/memory 简化版真流式）
-            if req.mode == "chat":
+            elif req.mode == "chat":
                 llm = app._resolve_llm(
                     api_key=req.api_key,
                     api_base=req.api_base,

@@ -4,9 +4,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  buildKnowledge,
+  
   getGraphStats,
   listKnowledgeDocs,
+  startKnowledgeBuild,
+  getKnowledgeBuild,
   uploadKnowledgeDoc,
 } from "../api/endpoints";
 import type { DocInfo } from "../types/api";
@@ -68,18 +70,29 @@ export function KnowledgePanel() {
 
   // 一键建库：不传 doc_dir，后端默认租户上传目录
   const onBuild = async () => {
-    setBusy(true);
-    setErr(null);
-    setBuildMsg(null);
+    setBusy(true); // 按钮转圈，避免连点
+    setErr(null); // 清掉上一次错误
+    setBuildMsg("已开始构建，请稍候…"); // 先告诉用户不是卡住
     try {
-      const res = await buildKnowledge({});
-      setBuildMsg(
-        `${res.message}\n分块数：${res.chunk_count}\n目录：${res.doc_dir}`,
-      );
+      const job = await startKnowledgeBuild(); // 只拿 job_id，请求很快返回
+      for (let i = 0; i < 300; i += 1) { // 最多等约 10 分钟
+        await new Promise((r) => setTimeout(r, 2000)); // 停 2 秒再查
+        const cur = await getKnowledgeBuild(job.job_id); // 拉最新状态
+        if (cur.status === "done") { // 全部文件都读进去了
+          setBuildMsg(`构建完成，分块数：${cur.chunk_count}`); // 展示切块数
+          return; // 结束轮询
+        }
+        if (cur.status === "failed") { // 有文件失败或建库抛错
+          throw new Error(cur.error || cur.message || "构建失败"); // 丢到下面的 catch
+        }
+        setBuildMsg(`构建中 ${cur.progress}%`); // 还在跑就更新进度
+      }
+      throw new Error("构建超时，请稍后重试"); // 轮询次数用完仍未结束
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setBuildMsg(null); // 失败不要留着「构建中」
+      setErr(e instanceof Error ? e.message : String(e)); // 红字显示原因
     } finally {
-      setBusy(false);
+      setBusy(false); // 无论成败都解开按钮
     }
   };
 

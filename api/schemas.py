@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # Mode：单次对话请求可选的「产品模式」，对应 AgentApplication.ask_* 系列方法。
 # MultiMode：仅当 mode="multi" 时有意义，对应 LangGraph 三种协作策略。
-Mode = Literal["chat", "rag", "graph-rag", "agent", "multi"]
+Mode = Literal["chat", "rag", "graph-rag", "agent", "multi", "consult"]
 MultiMode = Literal["sequential", "debate", "router"]
 
 

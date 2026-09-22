@@ -24,6 +24,8 @@ class DocumentLoader:
         self.chunk_size = chunk_size
         # 相邻块重叠：减少「关键句刚好被切断」的概率
         self.chunk_overlap = chunk_overlap
+        # 本轮load_directory()里读失败的文件说明，成功时应该是空列表
+        self.load_errors: list[str] = []
     def load_file(self, file_path: str | Path) -> list[Document]:
         """加载单个文件并切块，返回 Document 列表。"""
         path = Path(file_path)  # 统一成 Path
@@ -48,19 +50,24 @@ class DocumentLoader:
         return loaders[suffix](path)  # 调用对应加载器
     def load_directory(self, dir_path: str | Path, recursive: bool = True) -> list[Document]:
         """扫描目录内所有支持格式的文件并加载。"""
-        path = Path(dir_path)
-        if not path.is_dir():
+        path = Path(dir_path) #统一成path
+        if not path.is_dir(): #目录必须存在
             raise NotADirectoryError(f"目录不存在: {dir_path}")
+        self.load_errors = []#每次扫描先清空，避免上次的失败还留着
         docs: list[Document] = []  # 汇总结果
         pattern = "**/*" if recursive else "*"  # 是否递归子目录
         for file_path in path.glob(pattern):
-            # 只要文件，且后缀在白名单内
-            if file_path.is_file() and file_path.suffix.lower() in self.SUPPORTED_SUFFIXES:
-                try:
-                    docs.extend(self.load_file(file_path))  # 成功则追加块
-                except Exception as e:  # 单文件失败不拖垮整库
-                    print(f"警告: 加载 {file_path} 失败: {e}")
-        return docs
+            if not file_path.is_file(): #跳过子目录本身
+                continue 
+            if file_path.suffix.lower() not in self.SUPPORTED_SUFFIXES: #不支持的后缀不管
+                continue 
+            try:
+                docs.extend(self.load_file(file_path)) #成功就加入切块
+            except Exception as e:
+                self.load_errors.append(f"加载 {file_path} 失败: {e}") 
+        
+        return docs #调用方还要检查load_errors
+            
     # ---- 各格式加载器 ----
     def _load_pdf(self, path: Path) -> list[Document]:
         """PDF：用 PyPDFLoader 读页并按 chunk 切分。"""

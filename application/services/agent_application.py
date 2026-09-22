@@ -17,7 +17,7 @@
 """
 
 from __future__ import annotations
-
+from rag.evidence import has_enough_evidence, INSUFFICIENT_ANSWER
 import asyncio
 from pathlib import Path
 
@@ -359,6 +359,17 @@ class AgentApplication:
 
         self.logger.info("开始构建知识库: tenant=%s dir=%s", tenant_id, safe_dir)
         docs = self.doc_loader.load_directory(safe_dir)
+        # 有文件没读进去就整次失败，避免只建进 Excel、PDF 被丢掉还显示成功
+        load_errors = list(getattr(self.doc_loader, "load_errors", []))
+        if load_errors:
+            detail = "\n".join(load_errors)
+            raise AppError(
+                ErrorCode.VALIDATION,
+                "有文件未能读入，建库已中止：\n" + detail,
+                http_status=400,
+                internal=detail,
+            )
+
         if not docs:
             self.logger.warning("未找到任何文档")
             return 0
@@ -378,6 +389,33 @@ class AgentApplication:
             self.logger.info("BM25 索引已保存: %s (n=%s)", bm25_path, bm25.size)
         except Exception as e:
             self.logger.warning("BM25 保存失败: %s", e)
+
+        # 按源文件抽因子，不要对每个 chunk 都调模型
+        from application.tenancy import tenant_factor_records_path
+        from rag.structured.extract import extract_factors
+        from rag.structured.records import save_record
+
+        grouped: dict[str, list[str]] = {}
+        suffix_of: dict[str, str] = {}
+        for doc in docs:
+            src = str((doc.metadata or {}).get("source") or "")
+            grouped.setdefault(src, []).append(doc.page_content or "")
+            suffix_of[src] = Path(src).suffix.lower()
+        records = []
+        for src, parts in grouped.items():
+            preview = "\n".join(parts)[:6000]
+            factors = extract_factors(self.llm, preview, suffix_of.get(src, ""))
+            records.append(
+                {"source": src, "suffix": suffix_of.get(src, ""), "factors": factors}
+            )
+        try:
+            save_record(
+                tenant_factor_records_path(self.project_root, tenant_id),
+                records,
+            )
+            self.logger.info("因子记录已保存: %s 个源文件", len(records))
+        except Exception as e:
+            self.logger.warning("因子记录保存失败: %s", e)
 
         max_chars = self.settings.graph_extract_max_chars
         for doc in docs:
@@ -630,7 +668,6 @@ class AgentApplication:
                     sources[i]["dense_rank"] = h.dense_rank
                     sources[i]["sparse_rank"] = h.sparse_rank
                     sources[i]["route"] = decision.strategy
-            context = format_docs(docs)
         except Exception as e:
             self.logger.error("混合检索失败，回退纯向量: %s", e)
             try:
@@ -638,7 +675,11 @@ class AgentApplication:
             except Exception as e2:
                 return f"问答出错: {sanitize_exception_message(e2)}", []
             sources = self._docs_to_sources(docs)
-            context = format_docs(docs)
+
+        # 检索完成后再判断。没有非空正文就拒答，不把问题交给大模型
+        if not has_enough_evidence(docs):
+            return INSUFFICIENT_ANSWER, sources
+        context = format_docs(docs)
 
         try:
             chain = RAG_PROMPT | llm | StrOutputParser()
@@ -656,6 +697,86 @@ class AgentApplication:
         except Exception as e:
             self.logger.error("RAG 问答失败: %s", e)
             return f"问答出错: {sanitize_exception_message(e)}", sources
+
+    async def ask_consult(
+        self,
+        question: str,
+        *,
+        tenant_id: str = "default",
+        session_id: str = "default",
+        api_key: str | None = None,
+        api_base: str | None = None,
+        model_name: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """结构化咨询：缺关键因子就追问，齐了再混合检索。"""
+        from application.tenancy import (
+            tenant_bm25_path,
+            tenant_factor_records_path,
+            tenant_factor_session_path,
+        )
+        from rag.hybrid_retriever import HybridRetriever
+        from rag.rag_chain import format_docs
+        from rag.sparse_bm25 import BM25SparseIndex
+        from rag.structured.consult import run_consult
+        from rag.structured.records import (
+            load_record,
+            load_session_factors,
+            save_session_factors,
+        )
+
+        blocked = await self.security.guard(question, rate_limit=True)
+        if blocked:
+            return blocked, []
+
+        llm = self._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
+        records = load_record(tenant_factor_records_path(self.project_root, tenant_id))
+        state_path = tenant_factor_session_path(
+            self.project_root, tenant_id, session_id
+        )
+        factors = load_session_factors(state_path, suffix="")
+
+        store = self._vector_store_for_tenant(tenant_id)
+        bm25 = BM25SparseIndex.load(tenant_bm25_path(self.project_root, tenant_id))
+        hybrid = HybridRetriever(
+            store,
+            bm25,
+            top_k=self.settings.retrieval_top_k,
+            fetch_k=self.settings.hybrid_fetch_k,
+            rrf_k=self.settings.hybrid_rrf_k,
+            mode="hybrid",
+        )
+
+        def retrieve_context(query: str) -> str:
+            hits = hybrid.retrieve(query)
+            found = [hit.doc for hit in hits]
+            if not has_enough_evidence(found):
+                return ""
+            return format_docs(found)
+
+        try:
+            answer, updated = run_consult(
+                llm=llm,
+                user_message=question,
+                factors=factors,
+                records=records,
+                retrieve_context=retrieve_context,
+            )
+        except Exception as e:
+            self.logger.error("consult 失败: %s", e)
+            return f"问答出错: {sanitize_exception_message(e)}", []
+
+        save_session_factors(state_path, updated)
+        sources = [
+            {
+                "doc_id": str(item.get("source") or "record"),
+                "snippet": str(item.get("factors") or "")[:300],
+                "score": None,
+                "page": None,
+                "metadata": {"kind": "factor_record"},
+            }
+            for item in records[:5]
+        ]
+        return answer, sources
 
     # ===== GraphRAG =====
     async def ask_graph_rag(

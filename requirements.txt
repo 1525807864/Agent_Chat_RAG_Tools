@@ -12,6 +12,7 @@ chromadb>=0.5.0
 faiss-cpu>=1.9.0
 tiktoken>=0.7.0
 rank_bm25>=0.2.2
+cursor-sdk>=1.0.31
 
 # ===== 文档加载与解析 =====
 pypdf>=5.0.0

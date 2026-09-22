@@ -107,7 +107,7 @@ async def run_cli() -> None:
 
             if user_input.startswith("/mode"):
                 new_mode = user_input.split()[-1].strip()
-                if new_mode in ("chat", "rag", "graph-rag", "agent", "multi", "build"):
+                if new_mode in ("chat", "rag", "graph-rag", "agent", "multi", "consult", "build"):
                     current_mode = new_mode
                     print(f"已切换到 {current_mode} 模式")
                 else:
@@ -118,6 +118,11 @@ async def run_cli() -> None:
                 response = await app.ask_chat(user_input)
             elif current_mode == "rag":
                 answer, sources = await app.ask_rag(user_input)
+                response = answer
+                if sources:
+                    response += f"\n\n[sources: {len(sources)}]"
+            elif current_mode == "consult":
+                answer, sources = await app.ask_consult(user_input, session_id="cli")
                 response = answer
                 if sources:
                     response += f"\n\n[sources: {len(sources)}]"

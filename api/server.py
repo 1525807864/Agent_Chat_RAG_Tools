@@ -145,7 +145,7 @@ async def health() -> HealthResponse:
     """
     return HealthResponse(
         status="ok",
-        modes=["chat", "rag", "graph-rag", "agent", "multi"],
+        modes=["chat", "rag", "graph-rag", "agent", "multi", "consult"],
     )
 
 
