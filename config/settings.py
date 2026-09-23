@@ -277,6 +277,28 @@ class Settings(BaseSettings):
         alias="CURSOR_MODEL",
         description="本地 Agent 必填模型；composer-2.5 或 auto",
     )
+    # 通用 MCP：JSON 数组字符串。空 = 本轮不拉外部 MCP。
+    mcp_servers_json: str = Field(
+        default="",
+        alias="MCP_SERVERS_JSON",
+        description='例: [{"name":"playwright","command":"npx","args":["-y","@playwright/mcp@latest","--headless"]}]',
+    )
+    # 主动工具发现：true 时 Agent 不全量注入工具 schema
+    active_tool_discovery: bool = Field(
+        default=False,
+        alias="ACTIVE_TOOL_DISCOVERY",
+    )
+    active_tool_top_k: int = Field(
+        default=5,
+        alias="ACTIVE_TOOL_TOP_K",
+        ge=1,
+        le=20,
+    )
+    # 逗号分隔的常驻工具名
+    active_tool_base: str = Field(
+        default="calculator,web_search",
+        alias="ACTIVE_TOOL_BASE",
+    )
     search_result_limit: int = Field(
         default=5,
         ge=1,

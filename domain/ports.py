@@ -1,7 +1,14 @@
 """领域端口（Port）：由 infrastructure 提供 Adapter 实现。
 
-仅在存在明确扩展点时抽取：会话存储（Redis/SQLite）与知识图谱持久化。
-LLM / 向量库暂不抽 Port，避免无第二实现时的过度抽象。
+已抽取：
+- ``SessionStorePort``：Redis / SQLite 会话存储（有第二实现）
+- ``KnowledgeGraphPort``：图谱读写
+
+工具侧：``application.tools.ToolGateway`` 统一注册表 + MCP + 主动发现；
+Agent 只依赖网关，不直接拼 MultiServerMCPClient。
+
+LLM / 向量库暂不抽 Port：当前只有 DeepSeek / 单一向量实现，
+避免无第二实现时的过度抽象（见 SOLID 计划阶段 3 警示）。
 """
 
 from __future__ import annotations

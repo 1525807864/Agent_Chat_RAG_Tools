@@ -9,7 +9,7 @@ const DEFAULT_CLOUD_API = "http://39.106.64.240";
 function resolveApiBase() {
   const fromEnv = (process.env.LANGCHAIN_API_BASE || "").replace(/\/$/, "");
   if (fromEnv) return fromEnv;
-  return DEFAULT_LOCAL_API;
+  return DEFAULT_CLOUD_API;
 }
 
 function isLocalApi(url) {

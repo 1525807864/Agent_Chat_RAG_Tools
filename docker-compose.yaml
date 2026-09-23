@@ -56,6 +56,10 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs/www.lspagent.online.pem:/etc/nginx/ssl/www.lspagent.online.pem:ro
+      - ./certs/www.lspagent.online.key:/etc/nginx/ssl/www.lspagent.online.key:ro
     depends_on:
       - api
     networks: [internal]

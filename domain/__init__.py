@@ -10,6 +10,14 @@
 """
 
 from domain.knowledge import GraphStats, KnowledgeTriple
+from domain.run import RequestContext, RunResult, StreamEvent
 from domain.session import ChatMessage
 
-__all__ = ["ChatMessage", "KnowledgeTriple", "GraphStats"]
+__all__ = [
+    "ChatMessage",
+    "KnowledgeTriple",
+    "GraphStats",
+    "RequestContext",
+    "RunResult",
+    "StreamEvent",
+]
