@@ -19,6 +19,9 @@ def get_agent_app() -> AgentApplication:
         )
     return _app
 
+def is_agent_app_ready()->bool:
+    """不抛异常，给探针/中间件使用"""
+    return _app is not None and _app.session_store is not None 
 
 async def init_agent_app() -> AgentApplication:
     """应用启动时初始化业务单例并就绪会话存储。"""

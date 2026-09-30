@@ -42,6 +42,8 @@ COPY shared/ ./shared/
 COPY skills/ ./skills/
 COPY utils/ ./utils/
 COPY domain/ ./domain/
+COPY orchestration/ ./orchestration/
+
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

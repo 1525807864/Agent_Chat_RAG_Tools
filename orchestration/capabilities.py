@@ -25,6 +25,7 @@ class ChatCapability:
         return await app.use_cases.chat.execute(
             ctx.message,
             session_id=ctx.session_id,
+            tenant_id=ctx.tenant_id,
             api_key=ctx.api_key,
             api_base=ctx.api_base,
             model_name=ctx.model_name,
@@ -74,20 +75,23 @@ class GraphRagCapability:
 
 
 class AgentCapability:
-    name = "agent"
+    name = "agent" #能力必须和前端Mode="agent"对上，编排器用这个名字找处理器
 
     async def run(self, app: AgentApplication, ctx: RequestContext) -> RunResult:
+        # 把HTTP请求里的上下文转发给agentUseCase 
         return await app.use_cases.agent.execute(
-            ctx.message,
-            agent_name=ctx.agent_name,
-            api_key=ctx.api_key,
-            api_base=ctx.api_base,
-            model_name=ctx.model_name,
-            workspace_root=ctx.workspace_root,
-            files=ctx.files,
-            active_file=ctx.active_file,
-            e2e_base_url=ctx.e2e_base_url,
-            qa_tenant_id=ctx.qa_tenant_id,
+            ctx.message,                      # 本轮用户原文
+            session_id=ctx.session_id,        # ★关键：前端会话 id（已绑租户前缀，如 default__web-xxx）
+            tenant_id=ctx.tenant_id,          # 计费用
+            agent_name=ctx.agent_name,        # ReActAgent 显示名
+            api_key=ctx.api_key,              # 可选覆盖 LLM key
+            api_base=ctx.api_base,            # 可选覆盖 API base
+            model_name=ctx.model_name,        # 可选覆盖模型名
+            workspace_root=ctx.workspace_root,# 有则注入工作区读写工具
+            files=ctx.files,                  # 附件前缀
+            active_file=ctx.active_file,      # Skills / 文件相关
+            e2e_base_url=ctx.e2e_base_url,    # E2E 锁定 URL
+            qa_tenant_id=ctx.qa_tenant_id,    # QA 租户（若有）
         )
 
 
@@ -97,6 +101,7 @@ class MultiCapability:
     async def run(self, app: AgentApplication, ctx: RequestContext) -> RunResult:
         return await app.use_cases.multi.execute(
             ctx.message,
+            tenant_id=ctx.tenant_id,
             multi_mode=ctx.multi_mode,
             api_key=ctx.api_key,
             api_base=ctx.api_base,

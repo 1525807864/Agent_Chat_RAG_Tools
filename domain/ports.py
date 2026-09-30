@@ -8,7 +8,6 @@
 Agent 只依赖网关，不直接拼 MultiServerMCPClient。
 
 LLM / 向量库暂不抽 Port：当前只有 DeepSeek / 单一向量实现，
-避免无第二实现时的过度抽象（见 SOLID 计划阶段 3 警示）。
 """
 
 from __future__ import annotations
@@ -60,3 +59,21 @@ class KnowledgeGraphPort(Protocol):
     def list_triples(self) -> list[KnowledgeTriple]: ...
 
     def stats(self) -> GraphStats: ...
+
+@runtime_checkable 
+class UsageLedgerPort(Protocol):
+    """租户用量账本端口：热路径只允许高频累加，不写mysql"""
+    def add(
+        self,
+        tenant_id: str,
+        *,
+        requests: int = 1,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+    )->None:
+        """累加一笔用量"""
+        ...
+    
+    def snapshot(self,tenant_id:str | None = None)->dict:
+        """读取快照：单租户dict，或全部租户"""
+        ...

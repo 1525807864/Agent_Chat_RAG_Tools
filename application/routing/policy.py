@@ -35,7 +35,7 @@ def decide(mode: str, message: str, *, has_cursor_key: bool) -> RouteChoice:
     """决定本条消息用哪个后端。
 
     rag / consult / graph-rag / multi 必须留在 DeepSeek，
-    因为引用、因子和多智能体都不在 Cursor SDK 里。
+    agent / chat 默认deepseek，仅命中改动代码提示且有cursor密钥时才走cursor 
     """
     # 没密钥就没有 Cursor 这条路，调用方不用再判断。
     if not has_cursor_key:
@@ -45,13 +45,14 @@ def decide(mode: str, message: str, *, has_cursor_key: bool) -> RouteChoice:
     if mode in {"rag", "consult", "graph-rag", "multi"}:
         return RouteChoice("deepseek", f"mode_{mode}")
 
-    # agent 模式本身就是改代码，有密钥就走 Cursor。
-    if mode == "agent":
-        return RouteChoice("cursor", "mode_agent")
-
     text = (message or "").lower()
+
+    # agent 模式本身就是改代码，有密钥就走 Cursor。
+    if mode in {"chat","agent"} and any(hint in text for hint in _CODE_HINTS):
+        return RouteChoice("cursor", f"{mode}_code_hint")
+
     # 普通聊天只有命中改代码说法才切过去。
-    if mode == "chat" and any(hint in text for hint in _CODE_HINTS):
-        return RouteChoice("cursor", "chat_code_hint")
+    if mode == "agent":
+        return RouteChoice("deepseek", "agent_default_deepseek")
 
     return RouteChoice("deepseek", "default_chat")

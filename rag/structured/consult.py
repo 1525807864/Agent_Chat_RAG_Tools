@@ -6,11 +6,12 @@
 # ============================================================================
 
 from __future__ import annotations  # 类型注解
-
 from rag.evidence import INSUFFICIENT_ANSWER  # 原文为空时的固定拒答
 from rag.structured.extract import extract_factors  # 从用户话里补因子
 from rag.structured.records import merge_factors  # 合并时不擦掉旧值
 from rag.structured.schema import factors_for_suffix  # 按优先级找缺口
+from billing.turn_helper import empty_turn, merge_message  # 累加器
+from domain.usage import TurnUsage  # 类型
 
 
 # 这些核心字段没填时，先追问，不把整库塞进提示词
@@ -37,15 +38,16 @@ def run_consult(
     factors: dict[str, str],
     records: list[dict],
     retrieve_context,  # 可调用对象：传入问题字符串，返回参考资料字符串
-) -> tuple[str, dict[str, str]]:
-    """跑一轮咨询。返回 (给用户的话, 更新后的因子)。"""
+) -> tuple[str, dict[str, str],TurnUsage]:
+    """跑一轮咨询。返回 (给用户的话, 更新后的因子, 用量)。"""
+    turn = empty_turn()
     # 用户这句话本身也可能含有主题、对象，先抽一次再合并
     found = extract_factors(llm, user_message, suffix="")  # 对话侧只用核心因子
     updated = merge_factors(factors, found)  # 非空才覆盖
     gaps = missing_questions(updated, suffix="")  # 还缺什么
     if gaps:  # 关键因子不齐，本轮只问第一句
         answer = "为了检索得更准，请先补充这一点：\n" + gaps[0]
-        return answer, updated  # 不调用向量库
+        return answer, updated,turn # 不调用向量库，用量为空
 
     # 因子齐了：结构化记录 + 混合检索原文 一起当上下文
     record_lines = []  # 每条因子记录压成一行，避免提示词过长
@@ -60,7 +62,7 @@ def run_consult(
         context = ""
 
     if not (context or "").strip():  # 因子齐了，但没有足够原文
-        return INSUFFICIENT_ANSWER, updated  # 不调用大模型编造结论
+        return INSUFFICIENT_ANSWER, updated,turn # 不调用大模型编造结论，用量为空
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -75,7 +77,9 @@ def run_consult(
         f"用户问题：{user_message}"
     )
     result = llm.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+    model_str = str(getattr(llm,"model_name",None) or "")
+    turn = merge_message(turn,result,model=model_str)
     content = getattr(result, "content", result)  # 取出文本
     if not isinstance(content, str):
         content = str(content)
-    return content.strip(), updated
+    return content.strip(), updated,turn # 用量在merge_message里累计了

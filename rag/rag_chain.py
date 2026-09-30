@@ -82,12 +82,12 @@ def create_graph_rag_chain(llm, graph_rag_retriever, *, top_k: int | None = None
         return ctx
 
     chain = (
+        # 从问题中取出merged_context字符串，填进prompt的context
         {
             "context": RunnableLambda(lambda x: _retrieve(x["question"])),
             "question": RunnablePassthrough(),
         }
         | RAG_PROMPT
         | llm
-        | StrOutputParser()
     )
     return chain

@@ -1,7 +1,7 @@
 """DeepSeek ChatModel — 生产路径使用的唯一 LLM 适配器。
 
 业务统一通过本模块的 ``DeepSeekChatModel``（BaseChatModel）接入 LCEL / Agent。
-支持同步 ``_generate`` 与流式 ``_stream`` / ``_astream``。
+支持同步 ``_generate`` 与流式 ``_stream`` / ``_astream``；回包带 token usage。
 """
 
 from __future__ import annotations
@@ -48,6 +48,16 @@ def _convert_message_to_dict(message: BaseMessage) -> Dict[str, Any]:
     if isinstance(message, SystemMessage):
         return {"role": "system", "content": content}
     return {"role": "user", "content": content}
+
+
+def _usage_fields(usage: Any) -> tuple[int, int]:
+    """从厂商 usage 对象取出 prompt / completion tokens。"""
+    if usage is None:
+        return 0, 0
+    return (
+        int(getattr(usage, "prompt_tokens", 0) or 0),
+        int(getattr(usage, "completion_tokens", 0) or 0),
+    )
 
 
 class DeepSeekChatModel(BaseChatModel):
@@ -98,6 +108,10 @@ class DeepSeekChatModel(BaseChatModel):
             stop=stop,
         )
 
+        prompt_tokens, completion_tokens = _usage_fields(
+            getattr(response, "usage", None)
+        )
+
         raw = response.choices[0].message.content
         content = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
         if not content.strip():
@@ -109,7 +123,21 @@ class DeepSeekChatModel(BaseChatModel):
             raise ValueError(
                 "模型返回空内容，请重试或检查模型名 / API Key / 额度"
             )
-        message = AIMessage(content=content)
+        message = AIMessage(
+            content=content,
+            usage_metadata={
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            response_metadata={
+                "token_usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                },
+                "model_name": self.model_name,
+            },
+        )
         return ChatResult(generations=[ChatGeneration(message=message)])
 
     def _stream(
@@ -122,15 +150,35 @@ class DeepSeekChatModel(BaseChatModel):
         api_key, api_base = self._client_kwargs()
         client = OpenAI(api_key=api_key, base_url=api_base, timeout=120.0)
         formatted = [_convert_message_to_dict(m) for m in messages]
-        stream = client.chat.completions.create(
-            model=self.model_name,
-            messages=formatted,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stop=stop,
-            stream=True,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": formatted,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stop": stop,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        try:
+            stream = client.chat.completions.create(**create_kwargs)
+        except Exception:
+            create_kwargs.pop("stream_options", None)
+            stream = client.chat.completions.create(**create_kwargs)
         for event in stream:
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                prompt_tokens, completion_tokens = _usage_fields(usage)
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata={
+                            "input_tokens": prompt_tokens,
+                            "output_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
+                    )
+                )
+                continue
             if not event.choices:
                 continue
             delta = event.choices[0].delta
@@ -152,15 +200,35 @@ class DeepSeekChatModel(BaseChatModel):
         api_key, api_base = self._client_kwargs()
         client = AsyncOpenAI(api_key=api_key, base_url=api_base, timeout=120.0)
         formatted = [_convert_message_to_dict(m) for m in messages]
-        stream = await client.chat.completions.create(
-            model=self.model_name,
-            messages=formatted,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stop=stop,
-            stream=True,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": formatted,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stop": stop,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        try:
+            stream = await client.chat.completions.create(**create_kwargs)
+        except Exception:
+            create_kwargs.pop("stream_options", None)
+            stream = await client.chat.completions.create(**create_kwargs)
         async for event in stream:
+            usage = getattr(event, "usage", None)
+            if usage is not None:
+                prompt_tokens, completion_tokens = _usage_fields(usage)
+                yield ChatGenerationChunk(
+                    message=AIMessageChunk(
+                        content="",
+                        usage_metadata={
+                            "input_tokens": prompt_tokens,
+                            "output_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
+                    )
+                )
+                continue
             if not event.choices:
                 continue
             delta = event.choices[0].delta

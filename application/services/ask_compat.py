@@ -6,8 +6,15 @@ from __future__ import annotations
 class AskCompatMixin:
     """依赖 ``self.use_cases``；由 AgentApplication 混入。"""
 
-    def build_knowledge_base(self, doc_dir: str, tenant_id: str = "default") -> int:
-        return self.use_cases.knowledge.build(doc_dir, tenant_id=tenant_id)
+    def build_knowledge_base(
+        self,
+        doc_dir: str,
+        tenant_id: str = "default",
+        on_progress=None,
+    ) -> int:
+        return self.use_cases.knowledge.build(
+            doc_dir, tenant_id=tenant_id, on_progress=on_progress
+        )
 
     def list_tenant_docs(self, tenant_id: str = "default") -> list[dict]:
         return self.use_cases.knowledge.list_docs(tenant_id=tenant_id)
@@ -126,6 +133,7 @@ class AskCompatMixin:
         task: str,
         mode: str = "sequential",
         *,
+        tenant_id: str = "default", #与web端对齐
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
@@ -134,17 +142,24 @@ class AskCompatMixin:
         result = await self.use_cases.multi.execute(
             task,
             multi_mode=mode,
+            tenant_id=tenant_id,
             api_key=api_key,
             api_base=api_base,
             model_name=model_name,
             use_tool_calling=use_tool_calling,
         )
+        # 保持旧返回形状，CLI继续用final_answer / execution_log 
         return {
             "final_answer": result.answer,
             "execution_log": list(result.meta.get("execution_log") or []),
             "agent_outputs": dict(result.meta.get("agent_outputs") or {}),
             "total_time_ms": result.meta.get("total_time_ms"),
             "success": result.meta.get("success"),
+            "usage_meta": {
+                k: v
+                for k, v in (result.meta or {}).items()
+                if k in ("tenant_usage", "requests", "tokens_in", "tokens_out")
+            },
         }
 
     async def get_chat_history(self, session_id: str, n: int = 20) -> list[dict]:

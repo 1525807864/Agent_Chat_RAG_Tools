@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, AsyncIterator
 
 from application.routing.handoff import try_cursor_answer
-from billing.usage import LEDGER
 from domain.run import RequestContext, RunResult, StreamEvent
 from observability.tracing import trace
 from orchestration.capabilities import Capability, default_capabilities
@@ -15,14 +14,7 @@ if TYPE_CHECKING:
 
 
 class ChatOrchestrator:
-    """一次聊天请求的主干流水线。
-
-    1. Security 已在各 UseCase / ask_* 内做；此处不重复
-    2. ProviderRouter：改代码类请求可走 Cursor
-    3. CapabilityRouter：按 mode 分发到对应 UseCase
-    4. 计费 / 落库（Cursor 分支）
-    5. ``stream``：SSE 用，API 只消费 StreamEvent
-    """
+    """一次聊天请求的主干流水线。"""
 
     def __init__(
         self,
@@ -41,21 +33,22 @@ class ChatOrchestrator:
         return await self._run_capability(ctx)
 
     async def stream(self, ctx: RequestContext) -> AsyncIterator[StreamEvent]:
-        """流式编排：yield delta，最后一条 kind=final 带完整 answer。
-
-        - Cursor 命中 / 非 chat mode：整段一次 delta
-        - chat：走 ChatUseCase.astream（Skills + Memory，与 execute 同源）
-        """
+        """流式编排：yield delta，最后一条 kind=final（可带 usage meta）。"""
         cursor = await self._try_cursor(ctx)
         if cursor is not None:
             yield StreamEvent(kind="delta", text=cursor.answer)
-            yield StreamEvent(kind="final", answer=cursor.answer)
+            yield StreamEvent(
+                kind="final",
+                answer=cursor.answer,
+                meta=dict(cursor.meta or {}),
+            )
             return
 
         if ctx.mode == "chat":
             async for ev in self._app.use_cases.chat.astream(
                 ctx.message,
                 session_id=ctx.session_id,
+                tenant_id=ctx.tenant_id,
                 api_key=ctx.api_key,
                 api_base=ctx.api_base,
                 model_name=ctx.model_name,
@@ -63,12 +56,15 @@ class ChatOrchestrator:
                 files=ctx.files,
             ):
                 yield ev
-            LEDGER.add(ctx.tenant_id, requests=1)
             return
 
         result = await self._run_capability(ctx)
         yield StreamEvent(kind="delta", text=result.answer)
-        yield StreamEvent(kind="final", answer=result.answer)
+        yield StreamEvent(
+            kind="final",
+            answer=result.answer,
+            meta=dict(result.meta or {}),
+        )
 
     async def _try_cursor(self, ctx: RequestContext) -> RunResult | None:
         cursor = await try_cursor_answer(
@@ -86,11 +82,22 @@ class ChatOrchestrator:
         await self._app.use_cases.session.persist_turn(
             ctx.session_id, ctx.message, answer
         )
-        LEDGER.add(ctx.tenant_id, requests=1)
+        # Cursor 无官方 token 时只记请求次数
+        try:
+            from domain.usage import TurnUsage
+            from billing.recorder import record_turn
+
+            usage_meta = record_turn(
+                self._app.usage_ledger,
+                ctx.tenant_id,
+                TurnUsage(requests=1, model="cursor"),
+            )
+        except Exception:  # noqa: BLE001
+            usage_meta = {}
         trace("orchestrator_cursor", reason=cursor_meta.get("route_reason"))
         return RunResult(
             answer=answer,
-            meta={"capability": "cursor", **cursor_meta},
+            meta={"capability": "cursor", **cursor_meta, **usage_meta},
         )
 
     async def _run_capability(self, ctx: RequestContext) -> RunResult:
@@ -109,7 +116,19 @@ class ChatOrchestrator:
             ctx = replace(ctx, message=prefixed)
 
         result = await cap.run(self._app, ctx)
-        if ctx.mode in {"chat", "agent"}:
-            LEDGER.add(ctx.tenant_id, requests=1)
+        # chat 已在 UseCase 记账；其它 mode 暂记请求次数（后续可补 token）
+        if ctx.mode != "chat" and "usage" not in (result.meta or {}):
+            try:
+                from domain.usage import TurnUsage
+                from billing.recorder import record_turn
+
+                extra = record_turn(
+                    self._app.usage_ledger,
+                    ctx.tenant_id,
+                    TurnUsage(requests=1),
+                )
+                result = result.with_meta(**extra)
+            except Exception:  # noqa: BLE001
+                pass
         trace("orchestrator_capability", mode=ctx.mode)
         return result

@@ -42,8 +42,9 @@ class RunResult:
 
 @dataclass(frozen=True)
 class StreamEvent:
-    """流式编排事件：API 只认 delta / final，不接触 LLM 类型。"""
+    """流式编排事件：API 只认 kind/text/answer/meta，不接触 LLM 类型。"""
 
     kind: str  # "delta" | "final"
     text: str = ""
     answer: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)

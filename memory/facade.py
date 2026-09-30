@@ -171,5 +171,8 @@ class MemoryFacade:
         }
 
     def forget_session(self, session_id: str) -> None:
-        """清除进程内会话态（与 session_store.clear_session 配套）。"""
+        """清除进程内会话态（与 session_store.clear_session / 归档删除配套）。
+
+        注意：_states 只是缓存；权威在 chat_messages + memdir 文件/MySQL。
+        """
         self._states.pop(session_id, None)

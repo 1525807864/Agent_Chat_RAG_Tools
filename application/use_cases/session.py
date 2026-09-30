@@ -26,11 +26,32 @@ class SessionUseCase:
             await app.init_session_store()
         return await app.session_store.get_recent_messages(session_id, n)
 
-    async def delete_session(self, session_id: str) -> None:
+    async def delete_session(self, session_id: str, *, archive: bool = True) -> None:
+        """删除会话；默认先 JSONL 归档再清库（P2）。"""
         app = self._app
         if not app.session_store:
             await app.init_session_store()
-        await app.session_store.clear_session(session_id)
+
+        tenant_id = "default"
+        if "__" in (session_id or ""):
+            tenant_id = session_id.split("__", 1)[0] or "default"
+
+        if archive:
+            try:
+                from infrastructure.archive.transcript import archive_and_clear_session
+
+                await archive_and_clear_session(
+                    app.session_store,
+                    project_root=app.project_root,
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                )
+            except Exception:  # noqa: BLE001
+                app.logger.warning("会话归档失败，改为直接清空", exc_info=True)
+                await app.session_store.clear_session(session_id)
+        else:
+            await app.session_store.clear_session(session_id)
+
         if app.memory is not None:
             app.memory.forget_session(session_id)
 

@@ -4,7 +4,7 @@
  * 新增能力：顶栏消息气泡图标，点击显示/隐藏左侧会话历史。
  */
 import { useCallback, useEffect, useState } from "react";
-import { fetchHealth, getSessionHistory } from "./api/endpoints";
+import { getSessionHistory, waitUntilReady } from "./api/endpoints";
 import { getApiBase } from "./api/client";
 import { ChatInput } from "./components/ChatInput";
 import { ChatMessages } from "./components/ChatMessages";
@@ -14,6 +14,7 @@ import { LoginPage } from "./components/LoginPage";
 import { ModeBar } from "./components/ModeBar";
 import { SessionList } from "./components/SessionList";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TokenPriceCalculator } from "./components/TokenPriceCalculator";
 import {
   buildMessageWithAttachments,
   useAttachments,
@@ -88,6 +89,7 @@ export default function App() {
     error,
     useStream,
     setUseStream,
+    tenantUsage,
     send,
     stop,
     switchSession,
@@ -131,17 +133,18 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        const h = await fetchHealth();
+        // 闭环：等 /health/ready，避免进程活着但业务未初始化就开放 UI
+        const h = await waitUntilReady(60_000, 500);
         if (cancelled) return;
         setHealthOk(true);
         setHealthLabel(
-          `API OK · ${getApiBase()} · modes: ${h.modes.join(", ")}`,
+          `API Ready · ${getApiBase()} · modes: ${h.modes.join(", ")}`,
         );
       } catch (e) {
         if (cancelled) return;
         setHealthOk(false);
         const msg = e instanceof Error ? e.message : String(e);
-        setHealthLabel(`API 不可用 · ${getApiBase()} · ${msg}`);
+        setHealthLabel(`API 未就绪 · ${getApiBase()} · ${msg}`);
       }
     })();
     return () => {
@@ -216,7 +219,11 @@ export default function App() {
     },
     [attachments, send, clearAttachments, toPayload],
   );
-
+  useEffect(()=>{
+    const onLogout = () => setLoggedIn(false);
+    window.addEventListener("auth:logout",onLogout);
+    return ()=>window.removeEventListener("auth:logout",onLogout);
+  },[]);
   const canEmptySend =
     (hasDesktopFs && openFiles.length > 0) || attachments.length > 0;
 
@@ -259,6 +266,12 @@ export default function App() {
           <ChatBubbleIcon />
         </button>
         <div className="app-header-spacer" />
+        {tenantUsage ? (
+          <span className="token-bar" title="租户累计 Token（Redis）">
+            输入Token {tenantUsage.tokens_in} | 输出Token {tenantUsage.tokens_out} | 请求数 {tenantUsage.requests} · req{" "}
+          </span>
+        ) : null}
+        <TokenPriceCalculator tenantUsage={tenantUsage} />
         <button
           type="button"
           className="btn"

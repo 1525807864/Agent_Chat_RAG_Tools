@@ -134,6 +134,7 @@ async def chat_stream(
             )
 
             answer = ""
+            usage_meta: dict = {}
             async for ev in app.orchestrator.stream(ctx):
                 if ev.kind == "delta" and ev.text:
                     yield (
@@ -142,8 +143,15 @@ async def chat_stream(
                     )
                 elif ev.kind == "final":
                     answer = ev.answer
+                    usage_meta = dict(ev.meta or {})
 
-            done = {"delta": "", "done": True, "answer": answer}
+            done = {
+                "delta": "",
+                "done": True,
+                "answer": answer,
+                "usage": usage_meta.get("usage"),
+                "tenant_usage": usage_meta.get("tenant_usage"),
+            }
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
         except Exception as e:
             err = {"detail": str(e)}

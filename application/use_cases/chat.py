@@ -1,4 +1,4 @@
-"""普通对话用例：Memory + Skills + LLM（同步 + 真流式同源）。"""
+"""普通对话用例：Memory + Skills + LLM（同步 + 真流式同源）+ 用量记账。"""
 
 from __future__ import annotations
 
@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from billing.extract import merge_usage, usage_from_message
+from billing.recorder import record_turn
 from domain.run import RunResult, StreamEvent
+from domain.usage import TurnUsage
 from shared.errors import AppError, sanitize_exception_message
 
 if TYPE_CHECKING:
@@ -48,37 +50,43 @@ class ChatUseCase:
         message: str,
         *,
         session_id: str = "default",
+        tenant_id: str = "default",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         model_name: Optional[str] = None,
         active_file: Optional[str] = None,
         files: list | None = None,
     ) -> RunResult:
-        answer = await self._run(
+        answer, usage_meta = await self._run(
             message,
             session_id=session_id,
+            tenant_id=tenant_id,
             api_key=api_key,
             api_base=api_base,
             model_name=model_name,
             active_file=active_file,
             files=files,
         )
-        return RunResult(answer=answer, meta={"capability": "chat"})
+        return RunResult(
+            answer=answer,
+            meta={"capability": "chat", **usage_meta},
+        )
 
     async def astream(
         self,
         message: str,
         *,
         session_id: str = "default",
+        tenant_id: str = "default",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         model_name: Optional[str] = None,
         active_file: Optional[str] = None,
         files: list | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """真流式：与 execute 同路径（Skills + Memory），yield delta，末条 final。"""
+        """真流式：与 execute 同路径（Skills + Memory），yield delta，末条 final+usage。"""
         app = self._app
-        blocked = await app.security.guard(message, rate_limit=True)
+        blocked = await app.security.guard(message, rate_limit=False)
         if blocked:
             yield StreamEvent(kind="delta", text=blocked)
             yield StreamEvent(kind="final", answer=blocked)
@@ -103,18 +111,26 @@ class ChatUseCase:
             yield StreamEvent(kind="final", answer=err)
             return
 
-        prompt = self._prompt()
-        chain = prompt | prep.llm | StrOutputParser()
+        prompt_value = self._prompt().invoke(
+            {
+                "input": prep.llm_input,
+                "history": prep.history,
+                "summary_block": prep.system_extra,
+            }
+        )
+        messages = prompt_value.to_messages()
+        model_name_str = str(getattr(prep.llm, "model_name", "") or "")
         parts: list[str] = []
+        turn = TurnUsage(model=model_name_str)
         try:
-            async for chunk in chain.astream(
-                {
-                    "input": prep.llm_input,
-                    "history": prep.history,
-                    "summary_block": prep.system_extra,
-                }
-            ):
-                text = chunk if isinstance(chunk, str) else ("" if chunk is None else str(chunk))
+            async for chunk in prep.llm.astream(messages):
+                piece = usage_from_message(chunk, model=model_name_str)
+                if piece.tokens_in or piece.tokens_out:
+                    turn = merge_usage(turn, piece)
+                content = getattr(chunk, "content", None)
+                text = content if isinstance(content, str) else (
+                    "" if content is None else str(content)
+                )
                 if not text:
                     continue
                 parts.append(text)
@@ -138,9 +154,9 @@ class ChatUseCase:
             result = f"[安全拦截] {out_reason}"
 
         await self._persist(prep, result)
-        yield StreamEvent(kind="final", answer=result)
+        usage_meta = self._record(tenant_id, turn)
+        yield StreamEvent(kind="final", answer=result, meta=usage_meta)
 
-    # 兼容旧名
     async def astream_simple(self, message: str, **kwargs):
         async for ev in self.astream(message, **kwargs):
             if ev.kind == "delta" and ev.text:
@@ -151,16 +167,17 @@ class ChatUseCase:
         user_input: str,
         session_id: str = "default",
         *,
+        tenant_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
         active_file: str | None = None,
         files: list | None = None,
-    ) -> str:
+    ) -> tuple[str, dict]:
         app = self._app
-        blocked = await app.security.guard(user_input, rate_limit=True)
+        blocked = await app.security.guard(user_input, rate_limit=False)
         if blocked:
-            return blocked
+            return blocked, {}
 
         try:
             prep = await self._prepare(
@@ -176,31 +193,48 @@ class ChatUseCase:
             raise
         except Exception as e:  # noqa: BLE001
             app.logger.error("对话失败: %s", e)
-            return f"对话出错: {sanitize_exception_message(e)}"
+            return f"对话出错: {sanitize_exception_message(e)}", {}
 
         try:
-            chain = self._prompt() | prep.llm | StrOutputParser()
-            result = chain.invoke(
+            prompt_value = self._prompt().invoke(
                 {
                     "input": prep.llm_input,
                     "history": prep.history,
                     "summary_block": prep.system_extra,
                 }
             )
-            if not isinstance(result, str):
-                result = "" if result is None else str(result)
+            ai_msg = prep.llm.invoke(prompt_value.to_messages())
+            result = (
+                ai_msg.content
+                if isinstance(ai_msg.content, str)
+                else str(ai_msg.content or "")
+            )
             if not result.strip():
-                return "对话出错: 模型返回空内容，请重试或检查 API Key / 模型设置"
+                return "对话出错: 模型返回空内容，请重试或检查 API Key / 模型设置", {}
 
             out_ok, out_reason = app.content_filter.check_output(result)
             if not out_ok:
-                return f"[安全拦截] {out_reason}"
+                return f"[安全拦截] {out_reason}", {}
 
             await self._persist(prep, result)
-            return result
+            model_name_str = str(getattr(prep.llm, "model_name", "") or "")
+            turn = usage_from_message(ai_msg, model=model_name_str)
+            return result, self._record(tenant_id, turn)
         except Exception as e:
             app.logger.error("对话失败: %s", e)
-            return f"对话出错: {sanitize_exception_message(e)}"
+            return f"对话出错: {sanitize_exception_message(e)}", {}
+
+    def _record(self, tenant_id: str, turn: TurnUsage) -> dict:
+        """写入账本；失败不影响对话主路径。"""
+        app = self._app
+        ledger = getattr(app, "usage_ledger", None)
+        if ledger is None:
+            return {"usage": turn.to_dict()}
+        try:
+            return record_turn(ledger, tenant_id, turn)
+        except Exception as exc:  # noqa: BLE001
+            app.logger.warning("用量记账失败: %s", exc)
+            return {"usage": turn.to_dict()}
 
     async def _prepare(
         self,

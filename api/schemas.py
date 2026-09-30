@@ -237,3 +237,24 @@ class ErrorResponse(BaseModel):
     """统一错误体形状（文档用）；实际异常多由 FastAPI ``HTTPException.detail`` 承载。"""
 
     detail: str
+
+class LiveHealthResponse(BaseModel):
+    """liveness: 进程内存货即可，不证明业务已就绪"""
+    status: Literal["ok"] = "ok"
+    modes: list[str] = Field(default_factory=list)
+
+class ReadyCheckItem(BaseModel):
+    name: str 
+    ok: bool 
+    detail: str = ""
+    latency_ms: float | None = None 
+
+class ReadyHealthResponse(BaseModel):
+    """readiness：可接流量才 status=ready。"""
+    status: Literal["ready", "not_ready"]
+    ready: bool
+    startup_error: str | None = None
+    started_at: str | None = None
+    ready_at: str | None = None
+    checks: list[ReadyCheckItem] = Field(default_factory=list)
+    modes: list[str] = Field(default_factory=list)

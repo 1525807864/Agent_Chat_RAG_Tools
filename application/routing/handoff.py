@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from application.routing.agent_store import load_agent_id, save_agent_id
 from application.routing.policy import decide
+from infrastructure.db.session_routing_store import load_agent_id, save_agent_id
 
 
 def project_root() -> Path:
@@ -48,6 +48,8 @@ async def try_cursor_answer(
     except CursorAgentError:
         # 没启动成功，退回 DeepSeek。已经跑失败的 RuntimeError 不在这里吞掉。
         return None
+    except Exception:
+        return None 
 
     if agent_id:
         save_agent_id(root, tenant_id, session_id, agent_id)

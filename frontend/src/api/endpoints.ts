@@ -3,7 +3,7 @@
 // ============================================================================
 
 // 导入底层 JSON 客户端与 Base 读取
-import { apiJson, getApiBase } from "./client";
+import { apiJson, getApiBase, handleUnauthorized } from "./client";
 import { authHeaders } from "../auth/token";
 // 导入请求/响应类型（仅类型，编译后擦除）
 import type {
@@ -14,16 +14,47 @@ import type {
   DocListResponse, // 租户文档列表
   GraphStatsResponse, // 图谱统计
   HealthResponse, // 健康检查
+  ReadyHealthResponse, // 就绪检查
   SessionHistoryResponse, // 会话历史
   SessionListResponse, // 会话列表
   UploadDocResponse, // 上传文档响应
   KbJobResponse, // 建库任务状态
+  TurnUsage, // 本轮token用量
+  TenantUsageDTO, // 租户用量
 } from "../types/api";
 
-// GET /health：探活
+// GET /health：liveness 探活
 export function fetchHealth() {
-  // 返回 Promise<HealthResponse>
   return apiJson<HealthResponse>("/health");
+}
+
+// GET /health/ready：业务就绪（503 时仍解析 JSON，不抛错）
+export async function fetchReady(): Promise<ReadyHealthResponse> {
+  const res = await fetch(`${getApiBase()}/health/ready`, {
+    headers: { Accept: "application/json" },
+  });
+  const body = (await res.json()) as ReadyHealthResponse;
+  return body;
+}
+
+/** 轮询就绪，超时抛错（桌面/网页启动闭环用） */
+export async function waitUntilReady(
+  timeoutMs = 60_000,
+  intervalMs = 500,
+): Promise<ReadyHealthResponse> {
+  const t0 = Date.now();
+  let last: ReadyHealthResponse | null = null;
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      last = await fetchReady();
+      if (last.ready) return last;
+    } catch {
+      // 后端尚未监听端口时忽略
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  const hint = last?.startup_error || "timeout";
+  throw new Error(`后端未就绪：${hint}`);
 }
 
 // POST /api/chat：非流式一轮问答
@@ -103,8 +134,10 @@ export async function uploadKnowledgeDoc(file: File): Promise<UploadDocResponse>
     body: form,
   });
 
-  // 失败：尽量解析 FastAPI detail
   if (!res.ok) {
+    if (handleUnauthorized(res, "/api/knowledge/docs/upload")) {
+      throw new Error("登录已失效，请重新登录");
+    }
     let detail = `${res.status} ${res.statusText}`;
     try {
       const body = await res.json();
@@ -135,7 +168,10 @@ export async function postChatStream(
   handlers: {
     onStart?: (data: { session_id: string; mode: string }) => void; // start 事件
     onDelta?: (delta: string) => void; // message 增量
-    onDone?: (answer: string) => void; // done 定稿
+    onDone?: (answer: string,meta?:{
+      usage?: TurnUsage;
+      tenant_usage?: TenantUsageDTO;
+    }) => void; // done 定稿
     onError?: (detail: string) => void; // error 或 HTTP 失败
   },
   signal?: AbortSignal, // 可选：停止按钮 abort
@@ -150,14 +186,14 @@ export async function postChatStream(
     body: JSON.stringify(body), // 序列化请求
     signal, // 传入 AbortSignal
   });
-
-  // 失败或无 body：回调 onError 后返回
+  // 必须先于通用 !res.ok：否则 401 会先 return，登出逻辑跑不到
+  if (handleUnauthorized(res, "/api/chat/stream")) {
+    handlers.onError?.("登录已失效，请重新登录");
+    return;
+  }
   if (!res.ok || !res.body) {
-    // 尽量读文本错误信息
     const errText = await res.text().catch(() => res.statusText);
-    // 通知上层
     handlers.onError?.(errText || "stream 请求失败");
-    // 结束函数
     return;
   }
 
@@ -209,7 +245,10 @@ export async function postChatStream(
           : typeof d.delta === "string"
             ? d.delta
             : "";
-      handlers.onDone?.(answer);
+      handlers.onDone?.(answer,{
+        usage: (payload as any).usage,
+        tenant_usage: (payload as any).tenant_usage,
+      });
     } else if (eventName === "error") {
       // 业务错误帧
       const d = payload as { detail?: unknown };
@@ -276,4 +315,11 @@ export function postLogin(body: LoginRequest) {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/** GET /api/billing/usage：当前租户累计 Token */
+export function fetchTenantUsage() {
+  return apiJson<{ tenant_id?: string; usage: TenantUsageDTO }>(
+    "/api/billing/usage",
+  );
 }

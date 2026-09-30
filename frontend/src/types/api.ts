@@ -137,7 +137,7 @@ export interface DocListResponse {
   docs: DocInfo[];
 }
 
-// HealthResponse：GET /health
+// HealthResponse：GET /health（liveness，兼容旧字段）
 export interface HealthResponse {
   // 状态字，如 ok
   status: string;
@@ -145,10 +145,41 @@ export interface HealthResponse {
   modes: string[];
 }
 
+/** GET /health/ready */
+export interface ReadyHealthResponse {
+  status: "ready" | "not_ready";
+  ready: boolean;
+  startup_error?: string | null;
+  started_at?: string | null;
+  ready_at?: string | null;
+  checks?: Array<{
+    name: string;
+    ok: boolean;
+    detail?: string;
+    latency_ms?: number | null;
+  }>;
+  modes: string[];
+}
+
 // GraphStatsResponse：GET /api/knowledge/graph/stats
 export interface GraphStatsResponse {
   // 图谱统计键值
   stats: Record<string, unknown>;
+}
+
+/** 本轮 token 用量（与后端 TurnUsage.to_dict 对齐） */
+export interface TurnUsage {
+  tokens_in: number;
+  tokens_out: number;
+  tokens_total: number;
+  requests?: number;
+  model?: string;
+}
+
+export interface TenantUsageDTO {
+  requests: number;
+  tokens_in: number;
+  tokens_out: number;
 }
 
 // UiMessage：前端气泡本地模型（多 id，便于 key/流式更新）
@@ -159,4 +190,6 @@ export interface UiMessage {
   role: "user" | "assistant" | "system";
   // 展示正文
   content: string;
+  // 助手气泡下方显示本轮用量
+  usage?: TurnUsage;
 }

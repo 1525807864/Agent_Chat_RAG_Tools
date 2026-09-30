@@ -121,9 +121,11 @@ class Settings(BaseSettings):
         ge=1,
         le=100,
     )
-    # redis | sqlite（file 预留未实现）。默认 redis；本地开发请用 .env 覆盖为 sqlite。
+    # redis | sqlite | mysql（file 预留未实现）。默认 redis；本地开发请用 .env 覆盖为 sqlite。
     memory_backend: str = Field(
         default="redis",
+        alias="MEMORY_BACKEND",
+        description="记忆后端类型: redis/sqlite/mysql",
     )
     # Redis 会话 key 的 TTL（秒）；SQLite 后端忽略此字段，改用 delete_old_sessions。
     memory_ttl_seconds: int = Field(
@@ -235,6 +237,20 @@ class Settings(BaseSettings):
         ge=200,
         le=8000,
     )
+    #建库时是否对每个chunk调用LLM抽三元组
+    graph_extract_on_build: bool = Field(
+        default=True,
+        alias="GRAPH_EXTRACT_ON_BUILD",
+        description="建库时是否对每个chunk调用LLM抽三元组",
+    )
+    # 图谱抽取最多处理多少个chunk（0=不限制，开发阶段目前测试5~20）
+    graph_extract_max_docs: int = Field(
+        default=0,
+        alias="GRAPH_EXTRACT_MAX_DOCS",
+        ge=0,
+        description="图谱抽取最多处理多少个chunk（0=不限制，开发阶段目前测试5~20）",
+    )
+
     # 路径沙箱：知识库目录 / 工具读文件必须落在这些根下（相对项目根）
     allowed_data_roots: List[str] = Field(
         default=["data"],
@@ -416,6 +432,15 @@ class Settings(BaseSettings):
     log_level:str = Field(
         default="INFO",
     )
+    @field_validator("memory_backend")
+    @classmethod
+    def validate_memory_backend(cls,v:str)->str:
+        # 校验白名单，防止拼错静默落到错误实现
+        raw = (v or "redis").strip().lower()
+        if raw not in {"redis","sqlite","mysql"}:
+            raise ValueError("MEMORY_BACKEND 只能是 redis/sqlite/mysql")
+        return raw
+
     @field_validator("rate_limit_backend")
     @classmethod
     def validate_rate_limit_backend(cls, v: str) -> str:

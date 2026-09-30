@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from billing.extract import merge_usage
+from billing.turn_helper import empty_turn, safe_record_turn
 from domain.run import RunResult
+from domain.usage import TurnUsage
 
 if TYPE_CHECKING:
     from application.services.agent_application import AgentApplication
@@ -20,6 +23,7 @@ class MultiAgentUseCase:
         self,
         message: str,
         *,
+        tenant_id: str = "default",
         multi_mode: str = "sequential",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
@@ -29,11 +33,13 @@ class MultiAgentUseCase:
         result = await self._run(
             message,
             mode=multi_mode,
+            tenant_id=tenant_id,
             api_key=api_key,
             api_base=api_base,
             model_name=model_name,
             use_tool_calling=use_tool_calling,
         )
+        usage_meta = result.pop("usage_meta", {}) or {}
         return RunResult(
             answer=str(result.get("final_answer") or ""),
             meta={
@@ -42,6 +48,7 @@ class MultiAgentUseCase:
                 "agent_outputs": result.get("agent_outputs", {}),
                 "total_time_ms": result.get("total_time_ms"),
                 "success": result.get("success"),
+                **usage_meta,
             },
         )
 
@@ -50,6 +57,7 @@ class MultiAgentUseCase:
         task: str,
         mode: str = "sequential",
         *,
+        tenant_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
@@ -58,12 +66,11 @@ class MultiAgentUseCase:
         from agents.orchestrator import MultiAgentOrchestrator
         from agents.react_agent import RESEARCHER_SYSTEM_PROMPT, ReActAgent
         from agents.tool_calling_agent import ToolCallingAgent
-        from billing.usage import LEDGER
         from infrastructure.llm.openai_compat import create_chat_openai
         from observability.tracing import trace
 
         app = self._app
-        blocked = await app.security.guard(task, rate_limit=True)
+        blocked = await app.security.guard(task, rate_limit=False)
         if blocked:
             return {
                 "final_answer": blocked,
@@ -71,6 +78,7 @@ class MultiAgentUseCase:
                 "agent_outputs": {},
                 "total_time_ms": 0,
                 "success": False,
+                "usage_meta": {},
             }
 
         key = (api_key or "").strip() or (app.settings.deepseek_api_key or "").strip()
@@ -164,7 +172,23 @@ class MultiAgentUseCase:
             debate_rounds=2,
         )
 
-        LEDGER.add("default", requests=1)
+        # 合并各 agent 返回的 usage（图里能带到的部分）
+        acc = empty_turn(model=model)
+        for _name, raw in (result.agent_outputs or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            u = raw.get("usage")
+            if not isinstance(u, dict):
+                continue
+            piece = TurnUsage(
+                tokens_in=int(u.get("tokens_in") or 0),
+                tokens_out=int(u.get("tokens_out") or 0),
+                requests=int(u.get("requests") or 0),
+                model=str(u.get("model") or model),
+            )
+            acc = merge_usage(acc, piece)
+
+        usage_meta = safe_record_turn(app, tenant_id, acc, model=model)
         trace("multi_agent", mode=mode, success=result.success)
 
         outputs: dict = {}
@@ -183,4 +207,5 @@ class MultiAgentUseCase:
             "agent_outputs": outputs,
             "total_time_ms": result.total_time_ms,
             "success": result.success,
+            "usage_meta": usage_meta,
         }

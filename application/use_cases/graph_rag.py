@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from billing.usage import LEDGER
+from billing.turn_helper import empty_turn, merge_message, safe_record_turn
 from domain.run import RunResult
 from observability.tracing import trace
 from rag.knowledge_graph import GraphRAGRetriever
@@ -30,7 +30,7 @@ class GraphRagUseCase:
         api_base: Optional[str] = None,
         model_name: Optional[str] = None,
     ) -> RunResult:
-        answer, sources = await self._run(
+        answer, sources, usage_meta = await self._run(
             message,
             tenant_id=tenant_id,
             api_key=api_key,
@@ -39,7 +39,7 @@ class GraphRagUseCase:
         )
         return RunResult(
             answer=answer,
-            meta={"capability": "graph-rag", "sources": sources},
+            meta={"capability": "graph-rag", "sources": sources, **usage_meta},
         )
 
     async def _run(
@@ -50,11 +50,11 @@ class GraphRagUseCase:
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
-    ) -> tuple[str, list[dict]]:
+    ) -> tuple[str, list[dict], dict]:
         app = self._app
-        blocked = await app.security.guard(question, rate_limit=True)
+        blocked = await app.security.guard(question, rate_limit=False)
         if blocked:
-            return blocked, []
+            return blocked, [], {}
 
         llm = app._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
         store = app._vector_store_for_tenant(tenant_id)
@@ -78,11 +78,15 @@ class GraphRagUseCase:
             top_k=app.settings.retrieval_top_k,
         )
         try:
-            result = chain.invoke({"question": question})
-            answer = result if isinstance(result, str) else str(result)
-            LEDGER.add(tenant_id, requests=1)
+            # chain 返回 AIMessage（已去掉 StrOutputParser）
+            ai_msg = chain.invoke({"question": question})
+            raw = getattr(ai_msg, "content", ai_msg)
+            answer = raw if isinstance(raw, str) else str(raw or "")
+            model_str = str(getattr(llm, "model_name", None) or model_name or "")
+            turn = merge_message(empty_turn(model=model_str), ai_msg, model=model_str)
+            usage_meta = safe_record_turn(app, tenant_id, turn, model=model_str)
             trace("graph_rag_ask", tenant_id=tenant_id, hits=len(sources))
-            return answer, sources
+            return answer, sources, usage_meta
         except Exception as e:
             app.logger.error("GraphRAG 问答失败: %s", e)
-            return f"问答出错: {sanitize_exception_message(e)}", sources
+            return f"问答出错: {sanitize_exception_message(e)}", sources, {}

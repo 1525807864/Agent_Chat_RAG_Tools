@@ -2,6 +2,7 @@
 // client.ts：HTTP 底层 —— 解析 Base URL + 统一 apiJson
 // ============================================================================
 import { authHeaders } from "../auth/token";
+import { clearToken } from "../auth/token";
 // 解析后端根地址：Electron > .env > 默认 8020；并去掉末尾斜杠
 function resolveApiBase(): string {
   const fromElectron = window.electronAPI?.apiBase?.replace(/\/$/, "");
@@ -50,6 +51,20 @@ async function parseError(res: Response): Promise<Error> {
   return new Error(detail);
 }
 
+/** 401 时清 token 并广播 auth:logout；登录/注册接口返回 false。 */
+export function handleUnauthorized(res: Response, path: string): boolean {
+  if (res.status !== 401) return false;
+  if (
+    path.startsWith("/api/auth/login") ||
+    path.startsWith("/api/auth/register")
+  ) {
+    return false;
+  }
+  clearToken();
+  window.dispatchEvent(new CustomEvent("auth:logout"));
+  return true;
+}
+
 // 通用 JSON 请求：拼 URL、设 Header、校验 ok、返回 T
 export async function apiJson<T>(
   path: string, // 以 / 开头的路径
@@ -68,12 +83,12 @@ export async function apiJson<T>(
       ...(init?.headers || {}),
     },
   });
-  // HTTP 非 2xx：转 Error 抛出
   if (!res.ok) {
-    // await 解析错误体后 throw
+    // 业务接口 Token 失效：清 token + 通知 App 回登录页（登录/注册 401 除外）
+    if (handleUnauthorized(res, path)) {
+      throw new Error("登录已失效，请重新登录");
+    }
     throw await parseError(res);
   }
-  // 成功：解析 JSON 并断言为泛型 T
   return (await res.json()) as T;
 }
- 

@@ -88,7 +88,15 @@ export function ChatMessages({ messages, loading }: Props) {
               <TypingDots />
             ) : m.role === "assistant" ? (
               // 助手：打字机或瞬间
-              <TypewriterText text={m.content} instant={instant} speedMs={22} />
+              <>
+                <TypewriterText text={m.content} instant={instant} speedMs={22} />
+                {m.usage ? (
+                  <div className="msg-usage" title="本轮 Token">
+                    命中Token {m.usage.tokens_in} · 输出Token {m.usage.tokens_out} · 总计{" "}
+                    {m.usage.tokens_total}
+                  </div>
+                ) : null}
+              </>
             ) : (
               // 用户/系统：纯文本
               m.content

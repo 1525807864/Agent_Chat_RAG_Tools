@@ -109,6 +109,15 @@ class MemdirStore:
                 it["meta"] = meta or {}
                 it["updated_at"] = now
                 self._write(path, doc)
+                self._mirror_mysql(
+                    session_id=session_id,
+                    kind=kind,
+                    text=text,
+                    tags=tags,
+                    score_hint=score_hint,
+                    meta=meta,
+                    item_id=iid,
+                )
                 return it
 
         new_item = {
@@ -125,7 +134,48 @@ class MemdirStore:
         if len(items) > 1000:
             doc["items"] = items[-1000:]
         self._write(path, doc)
+        self._mirror_mysql(
+            session_id=session_id,
+            kind=kind,
+            text=text,
+            tags=tags,
+            score_hint=score_hint,
+            meta=meta,
+            item_id=iid,
+        )
         return new_item
+
+    def _mirror_mysql(
+        self,
+        *,
+        session_id: str | None,
+        kind: str,
+        text: str,
+        tags: list[str] | None,
+        score_hint: float,
+        meta: dict | None,
+        item_id: str,
+    ) -> None:
+        """P2：双写 MySQL memory_items（失败忽略）。"""
+        try:
+            from infrastructure.db.memory_items_store import upsert_memory_item
+
+            tenant_id = "default"
+            if session_id and "__" in session_id:
+                tenant_id = session_id.split("__", 1)[0] or "default"
+            upsert_memory_item(
+                tenant_id=tenant_id,
+                session_id=session_id,
+                kind=kind,
+                text=text,
+                origin=str((meta or {}).get("origin") or "agent"),
+                tags=tags,
+                score_hint=score_hint,
+                meta=meta,
+                item_id=item_id,
+            )
+        except Exception:
+            pass
 
     def upsert_project_item(self, **kwargs) -> dict[str, Any]:
         """项目级 upsert（与 session 对称，供偏好沉淀使用）。"""
@@ -153,6 +203,15 @@ class MemdirStore:
                     }
                 )
                 self._write(path, doc)
+                self._mirror_mysql(
+                    session_id=None,
+                    kind=kind,
+                    text=text,
+                    tags=tags,
+                    score_hint=score_hint,
+                    meta=meta,
+                    item_id=iid,
+                )
                 return it
 
         new_item = {
@@ -169,4 +228,13 @@ class MemdirStore:
         if len(items) > 1000:
             doc["items"] = items[-1000:]
         self._write(path, doc)
+        self._mirror_mysql(
+            session_id=None,
+            kind=kind,
+            text=text,
+            tags=tags,
+            score_hint=score_hint,
+            meta=meta,
+            item_id=iid,
+        )
         return new_item

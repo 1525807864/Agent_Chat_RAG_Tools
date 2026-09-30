@@ -297,6 +297,69 @@ button {
   margin-bottom: 4px; /* 与正文间距 */
 }
 
+.msg-usage {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-bar {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-calc {
+  position: relative;
+  margin-right: 8px;
+}
+
+.token-calc-toggle {
+  font-size: 0.8rem;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #ddd);
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+}
+
+.token-calc-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 220px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.token-calc-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.token-calc-panel input {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #ddd);
+}
+
+.token-calc-sum {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 /* 三点加载：必须用 flex，gap 才生效 */
 .typing-dots {
   display: inline-flex; /* 横向三点 */

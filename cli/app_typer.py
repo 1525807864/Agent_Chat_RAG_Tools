@@ -54,7 +54,12 @@ def ask(
         if mode == "agent":
             return await agent.ask_agent(message)
         if mode == "multi":
-            return await agent.ask_multi_agent(message, mode=multi_mode)
+            # --tenant 传给 ask_multi_agent，用量记到正确租户
+            return await agent.ask_multi_agent(
+                message,
+                mode=multi_mode,
+                tenant_id=tenant_id,
+            )
         raise typer.BadParameter(f"不支持 mode={mode}")
 
     try:

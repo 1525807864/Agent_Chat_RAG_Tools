@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import textwrap
 
@@ -20,9 +21,13 @@ async def run_cli() -> None:
     app = AgentApplication()
     await app.init_session_store()
 
+    # 交互 CLI 租户：优先环境变量 CLI_TENANT_ID，否则 default
+    cli_tenant_id = (os.getenv("CLI_TENANT_ID") or "default").strip() or "default"
+
     print("=" * 60)
     print("  多 Agent 智能助手系统")
     print("  模式: chat | rag | graph-rag | agent | multi | build")
+    print(f"  租户: {cli_tenant_id} (可用环境变量 CLI_TENANT_ID 覆盖)")
     print("  输入 '/mode <模式>' 切换, 输入 '退出' 结束")
     print("  粘贴多行文本时, 以 '###' 单独一行结束输入")
     print("=" * 60)
@@ -134,10 +139,16 @@ async def run_cli() -> None:
             elif current_mode == "agent":
                 response = await app.ask_agent(user_input)
             elif current_mode == "multi":
-                multi = await app.ask_multi_agent(user_input)
+                # 传入真实租户，避免计费落到 default
+                multi = await app.ask_multi_agent(
+                    user_input,
+                    tenant_id=cli_tenant_id,
+                )
                 response = multi.get("final_answer", "")
             elif current_mode == "build":
-                count = app.build_knowledge_base(user_input)
+                count = app.build_knowledge_base(
+                    user_input, tenant_id=cli_tenant_id
+                )
                 response = f"知识库构建完成, 共加载 {count} 个文档片段"
             else:
                 response = f"未知模式: {current_mode}"

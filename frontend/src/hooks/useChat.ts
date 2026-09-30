@@ -1,9 +1,16 @@
 /**
  * useChat：对话核心状态；send 可附带 workspace_root + files。
  */
-import { useCallback, useRef, useState } from "react";
-import { postChat, postChatStream } from "../api/endpoints";
-import type { LlmSettings, Mode, MultiMode, UiMessage } from "../types/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchTenantUsage, postChat, postChatStream } from "../api/endpoints";
+import type {
+  LlmSettings,
+  Mode,
+  MultiMode,
+  TenantUsageDTO,
+  TurnUsage,
+  UiMessage,
+} from "../types/api";
 import type { WorkspacePayload } from "../types/workspace";
 
 function uid() {
@@ -37,7 +44,31 @@ export function useChat(llmSettings?: LlmSettings) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [useStream, setUseStream] = useState(true);
+  const [tenantUsage, setTenantUsage] = useState<TenantUsageDTO | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchTenantUsage();
+        if (cancelled) return;
+        const u = res.usage;
+        if (u && typeof u.tokens_in === "number") {
+          setTenantUsage({
+            requests: Number(u.requests) || 0,
+            tokens_in: Number(u.tokens_in) || 0,
+            tokens_out: Number(u.tokens_out) || 0,
+          });
+        }
+      } catch {
+        // 未登录或账本不可用时忽略
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -99,9 +130,12 @@ export function useChat(llmSettings?: LlmSettings) {
             typeof res.answer === "string" && res.answer.trim()
               ? res.answer
               : emptyAnswerFallback();
+          const usage = (res.meta?.usage as TurnUsage | undefined) || undefined;
+          const tu = res.meta?.tenant_usage as TenantUsageDTO | undefined;
+          if (tu) setTenantUsage(tu);
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId ? { ...m, content: text } : m,
+              m.id === assistantId ? { ...m, content: text, usage } : m,
             ),
           );
         } else {
@@ -122,13 +156,16 @@ export function useChat(llmSettings?: LlmSettings) {
                   ),
                 );
               },
-              onDone: (answer) => {
+              onDone: (answer, meta) => {
                 sawDone = true;
                 const merged = (answer || acc).trim() ? answer || acc : "";
                 const finalText = merged || emptyAnswerFallback();
+                if (meta?.tenant_usage) setTenantUsage(meta.tenant_usage);
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === assistantId ? { ...m, content: finalText } : m,
+                    m.id === assistantId
+                      ? { ...m, content: finalText, usage: meta?.usage }
+                      : m,
                   ),
                 );
               },
@@ -203,6 +240,7 @@ export function useChat(llmSettings?: LlmSettings) {
     error,
     useStream,
     setUseStream,
+    tenantUsage,
     send,
     stop,
     switchSession,

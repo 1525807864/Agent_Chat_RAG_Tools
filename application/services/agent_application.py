@@ -15,6 +15,7 @@ from application.skills_runtime import SkillsRuntime
 from application.tenant_resources import TenantResources, docs_to_sources
 from application.tools import ToolGateway
 from application.use_cases.bundle import UseCaseBundle
+from billing.factory import create_usage_ledger
 from config.settings import get_settings
 from infrastructure.llm.deepseek import DeepSeekChatModel
 from memory.facade import MemoryFacade
@@ -78,6 +79,7 @@ class AgentApplication(AskCompatMixin):
 
         self.tenants = TenantResources(self.settings, self.project_root)
         self.skills = SkillsRuntime(self.project_root, self.logger)
+        self.usage_ledger = create_usage_ledger(self.settings)
 
         self.rate_limiter = AsyncRateLimiter(
             max_requests=self.settings.rate_limit_requests,

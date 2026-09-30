@@ -13,13 +13,13 @@
 
 from __future__ import annotations
 
+from billing.turn_helper import empty_turn, merge_message  # 累加器
 import json
 import logging
 import re
 from typing import Any, Optional
-
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
 from agents.base_agent import BaseAgent
@@ -30,11 +30,16 @@ REACT_SYSTEM_PROMPT = """你是一个使用 ReAct 框架的智能助手。你可
 
 {tools_description}
 
-请严格按以下格式响应（不要省略 Action/Action Input 行）:
+请按以下格式响应:
 
-Thought: [分析当前情况, 决定下一步]
+需要工具时:
+Thought: [分析]
 Action: [工具名称]
-Action Input: [工具输入, 必须是 JSON 对象]
+Action Input: [必须是 JSON 对象，例如 {{"query": "关键词"}}]
+
+不需要工具时（问候、常识、简单计算说明等）:
+Thought: 不需要工具
+Final Answer: [直接回答用户]
 
 系统会返回 Observation。你可以重复 Thought/Action/Action Input。
 
@@ -44,9 +49,10 @@ Final Answer: [最终答案]
 
 规则:
 1. 每次只调用一个工具
-2. Action Input 必须是有效 JSON（例如 {{"query": "关键词"}}）
+2. Action Input 必须是有效 JSON
 3. 不要编造 Observation 中没有的信息
-4. 若工具列表含 web_search：查询新闻/股价/行情/实时事实时必须先 Action: web_search，禁止声称无法联网或让用户自己去查网页
+4. 仅当需要实时联网信息（新闻/股价/天气等）且工具列表含 web_search 时，才 Action: web_search
+5. 不需要工具时禁止编造 Action，必须直接 Final Answer
 """
 
 RESEARCHER_SYSTEM_PROMPT = """你是信息研究员（researcher），必须使用 ReAct + 工具查证。
@@ -109,7 +115,18 @@ class ReActAgent(BaseAgent):
         return None
 
     def _has_web_search(self) -> bool:
-        return any(t.name == "web_search" for t in self.tools)
+        """工具列表里是否注册了 web_search。"""
+        return self._get_tool_by_name("web_search") is not None
+
+    def _needs_web_search(self, task: str) -> bool:
+        """只有明显要联网查事实时才强制搜；闲聊/常识不搜。"""
+        text = (task or "").lower()
+        hints = (
+            "新闻", "股价", "行情", "纳斯达克", "天气", "今日", "今天油价",
+            "实时", "最新", "搜一下", "搜索", "查一下网上", "需要查询网页信息",
+            "news", "stock", "weather", "price today",
+        )
+        return any(h in text for h in hints)
 
     def _parse_action(self, text: str) -> tuple[str | None, dict | None]:
         action_match = re.search(
@@ -192,12 +209,40 @@ class ReActAgent(BaseAgent):
                     return f"工具调用失败: {e2}"
             return f"工具调用失败: {e}"
 
-    async def think(self, task: str, context: Optional[dict] = None) -> str:
+    async def think(self, task: str, context: Optional[dict] = None) -> tuple[str, object]:
+        """返回 (模型文本, 原始 AIMessage)，方便外层抽 usage。
+
+        context 约定（由 AgentUseCase 传入，本轮循环会追加字段）：
+          - history: list[dict]，元素形如 {"role":"user"|"assistant","content":"..."}
+          - format_reminder: 格式纠错提醒
+          - last_tool_result: 上一轮 Observation
+        """
         prompt = self.system_prompt.format(
             tools_description=self._get_tools_description()
         )
-        messages = [SystemMessage(content=prompt)]
+        messages: list = [SystemMessage(content=prompt)]
 
+        # 注入多轮对话历史（与 chat 的 MessagesPlaceholder 同作用）
+        if context and context.get("history"):
+            messages.append(
+                SystemMessage(
+                    content=(
+                        "以下是本会话最近对话历史，仅作上下文参考；"
+                        "不要对历史消息再输出 Action，只服务当前「任务」。"
+                    )
+                )
+            )
+            for msg in context["history"]:
+                role = (msg.get("role") or "").strip().lower()
+                content = msg.get("content") or ""
+                if not content:
+                    continue
+                if role == "user":
+                    messages.append(HumanMessage(content=content))
+                elif role in ("assistant", "ai"):
+                    messages.append(AIMessage(content=content))
+
+        # 格式纠错（解析失败时由 run() 写入）
         if context and context.get("format_reminder"):
             messages.append(HumanMessage(content=str(context["format_reminder"])))
 
@@ -208,14 +253,17 @@ class ReActAgent(BaseAgent):
                         "Observation:\n"
                         f"{context['last_tool_result']}\n\n"
                         "请基于以上 Observation 继续：若信息足够则输出 Final Answer: ..."
-                        "；若还需搜索则再次 Action: web_search。"
+                        "；若还需工具则再输出 Action / Action Input。"
                     )
                 )
             )
 
         messages.append(HumanMessage(content=f"任务: {task}\n请开始分析:"))
         response = await self.llm.ainvoke(messages)
-        return response.content or ""
+        text = response.content or ""
+        if not isinstance(text, str):
+            text = str(text)
+        return text, response
 
     def _force_web_search(self, task: str, context: Optional[dict]) -> dict:
         """模型拒不按 ReAct 格式调用时，直接执行一次 web_search，避免空跑。"""
@@ -224,13 +272,15 @@ class ReActAgent(BaseAgent):
             return context or {}
         query = (task or "").strip()
         # 去掉过长前缀，保留检索核心
-        if len(query) > 200:
-            query = query[:200]
+        if len(query) > 1000:
+            query = query[:1000]
         _log.info("[%s] 强制调用 web_search query=%s", self.name, query[:80])
         obs = self._invoke_tool(tool, {"query": query})
         return (context or {}) | {"last_tool_result": obs, "forced_search": True}
 
     async def run(self, task: str, context: Optional[dict] = None) -> dict:
+        model_str = str(getattr(self.llm, "model_name", "") or "")
+        usage_acc = empty_turn(model=model_str)  # 本 Agent 回合 token 累加器
         tool_calls_log: list[dict] = []
         tool_call_count = 0
         last_thought = ""
@@ -238,26 +288,12 @@ class ReActAgent(BaseAgent):
         forced_once = False
 
         for iteration in range(self.max_tool_calls):
-            thought = await self.think(task, context)
+            thought, ai_msg = await self.think(task, context)
+            usage_acc = merge_message(usage_acc, ai_msg, model=model_str)
             last_thought = thought
             _log.info("[%s] 第%s轮思考: %s...", self.name, iteration + 1, thought[:200])
 
             final_answer = self._parse_final_answer(thought)
-            # 若还没搜过就宣称 Final Answer / 无法联网 → 先强制搜索
-            if final_answer and self._has_web_search() and not tool_calls_log and not forced_once:
-                context = self._force_web_search(task, context)
-                forced_once = True
-                tool_calls_log.append(
-                    {
-                        "iteration": iteration,
-                        "tool": "web_search",
-                        "input": {"query": task[:200]},
-                        "output": str(context.get("last_tool_result", ""))[:500],
-                        "forced": True,
-                    }
-                )
-                tool_call_count += 1
-                continue
 
             if final_answer:
                 _log.info("[%s] 得到最终答案", self.name)
@@ -267,14 +303,34 @@ class ReActAgent(BaseAgent):
                     "result": final_answer,
                     "tool_calls": tool_calls_log,
                     "iterations": iteration + 1,
+                    "usage": usage_acc.to_dict(),
                 }
 
             action_name, action_input = self._parse_action(thought)
             if not action_name:
                 consecutive_parse_failures += 1
-                # 有 web_search 且尚未调用：第一次失败就强制搜，避免连续空转
+                #模型用自然语言直接答、没写Action->把整段当答案
+                stripped = (thought or "").strip()
+                if (
+                    consecutive_parse_failures >= 1
+                    and stripped 
+                    and "action:" not in stripped.lower()
+                ):
+                    _log.info("[%s] 非ReAct格式，当作直接回答",self.name)
+                    return {
+                        "agent": self.name,
+                        "role": self.role,
+                        "result": stripped,
+                        "tool_calls": tool_calls_log,
+                        "iterations": iteration + 1,
+                        "usage": usage_acc.to_dict(),
+                    }
+                
+
+                # 仅[需要联网]的问题才强制搜一次
                 if (
                     self._has_web_search()
+                    and self._needs_web_search(task)
                     and not tool_calls_log
                     and not forced_once
                     and consecutive_parse_failures >= 1
@@ -285,8 +341,8 @@ class ReActAgent(BaseAgent):
                         {
                             "iteration": iteration,
                             "tool": "web_search",
-                            "input": {"query": task[:200]},
-                            "output": str(context.get("last_tool_result", ""))[:500],
+                            "input": {"query": task[:1000]},
+                            "output": str(context.get("last_tool_result", ""))[:2000],
                             "forced": True,
                         }
                     )
@@ -312,11 +368,12 @@ class ReActAgent(BaseAgent):
                             "agent": self.name,
                             "role": self.role,
                             "result": (
-                                "根据 web_search 结果：\n"
+                                "根据工具结果：\n"
                                 f"{context['last_tool_result']}"
                             ),
                             "tool_calls": tool_calls_log,
                             "iterations": iteration + 1,
+                            "usage": usage_acc.to_dict(),
                         }
                     return {
                         "agent": self.name,
@@ -324,15 +381,19 @@ class ReActAgent(BaseAgent):
                         "result": thought,
                         "tool_calls": tool_calls_log,
                         "iterations": iteration + 1,
+                        "usage": usage_acc.to_dict(),
                     }
 
                 context = (context or {}) | {
                     "format_reminder": (
-                        "上一次输出不符合 ReAct 格式。请立刻输出：\n"
+                        "上一次输出不符合 ReAct 格式。请二选一：\n"
+                        "A) 不需要工具 → 直接：\n"
+                        "Thought: 不需要工具\n"
+                        "Final Answer: 你的中文回答\n"
+                        "B) 需要联网 →：\n"
                         "Thought: ...\n"
                         "Action: web_search\n"
-                        'Action Input: {"query": "与任务相关的搜索词"}\n'
-                        "不要说无法联网。"
+                        'Action Input: {"query": "搜索词"}\n'
                     )
                 }
                 continue
@@ -370,6 +431,7 @@ class ReActAgent(BaseAgent):
                 "tool_calls": tool_calls_log,
                 "iterations": tool_call_count,
                 "warning": "达到最大工具调用次数",
+                "usage": usage_acc.to_dict(),
             }
 
         return {
@@ -379,4 +441,5 @@ class ReActAgent(BaseAgent):
             "tool_calls": tool_calls_log,
             "iterations": tool_call_count,
             "warning": "达到最大工具调用次数",
+            "usage": usage_acc.to_dict(),
         }

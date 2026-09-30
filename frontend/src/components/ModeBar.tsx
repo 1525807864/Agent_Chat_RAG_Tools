@@ -126,7 +126,7 @@ export function ModeBar({
       {/* 健康状态：按 ok/bad 加 class */}
       <span
         className={`health${healthOk === true ? " ok" : healthOk === false ? " bad" : ""}`}
-        title="GET /health" // 悬停提示接口
+        title="GET /health/ready" // 悬停提示：就绪探针
       >
         {healthLabel}
       </span>

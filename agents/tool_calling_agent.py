@@ -11,6 +11,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from billing.turn_helper import empty_turn, merge_message
+
 
 class ToolCallingAgent:
     """基于 bind_tools 的多轮工具调用 Agent。"""
@@ -33,15 +35,23 @@ class ToolCallingAgent:
         self.trace: list[dict[str, Any]] = []
 
     async def run(self, task: str, context: dict | None = None) -> dict:
-        """返回 ``{"result": str, "trace": list}``。"""
+        """返回 ``{"result": str, "trace": list, "usage": dict}``。"""
         _ = context
         messages: list = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=task),
         ]
+        # bind_tools 后的 runnable 可能没有 model_name，尽量从底层读
+        model_str = str(
+            getattr(self.llm, "model_name", None)
+            or getattr(getattr(self.llm, "bound", None), "model_name", None)
+            or ""
+        )
+        usage_acc = empty_turn(model=model_str)
 
         for _ in range(self.max_rounds):
             ai = await self._ainvoke(messages)
+            usage_acc = merge_message(usage_acc, ai, model=model_str)
             messages.append(ai)
             tool_calls = getattr(ai, "tool_calls", None) or []
             self.trace.append(
@@ -55,7 +65,11 @@ class ToolCallingAgent:
             if not tool_calls:
                 text = ai.content if isinstance(ai.content, str) else str(ai.content or "")
                 self.trace.append({"type": "final", "text": text})
-                return {"result": text, "trace": list(self.trace)}
+                return {
+                    "result": text,
+                    "trace": list(self.trace),
+                    "usage": usage_acc.to_dict(),
+                }
 
             for call in tool_calls:
                 name = call.get("name") if isinstance(call, dict) else getattr(call, "name", "")
@@ -83,7 +97,11 @@ class ToolCallingAgent:
                     ToolMessage(content=out_str, tool_call_id=str(call_id or name))
                 )
 
-        return {"result": "达到最大工具调用轮次", "trace": list(self.trace)}
+        return {
+            "result": "达到最大工具调用轮次",
+            "trace": list(self.trace),
+            "usage": usage_acc.to_dict(),
+        }
 
     async def _ainvoke(self, messages: list) -> AIMessage:
         if hasattr(self.llm, "ainvoke"):

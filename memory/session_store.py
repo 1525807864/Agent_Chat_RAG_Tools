@@ -208,13 +208,23 @@ class SQLiteSessionStore(BaseSessionStore):
 async def create_session_store(backend: str = "sqlite", **kwargs) -> BaseSessionStore:
     """工厂函数: 根据配置创建对应的存储后端
 
+    - 本地开发：MEMORY_BACKEND = SQLITE
+    - 单机热缓存：redis
+    - 商用权威：mysql
     知识点: 工厂模式 — 调用方不需要知道具体实现类, 只需传类型字符串
     """
-    backends = {
-        "redis": RedisSessionStore,
-        "sqlite": SQLiteSessionStore,
-    }
-    store_cls = backends.get(backend)
-    if store_cls is None:
-        raise ValueError(f"不支持的后端类型: {backend}, 可选: {list(backends.keys())}")
-    return store_cls(**kwargs)
+    raw = (backend or "sqlite").strip().lower()
+    if raw == "redis":
+        # 原有redis实现，kwargs里应有redis_url / ttl_seconds
+        return RedisSessionStore(**kwargs)
+    if raw == "sqlite":
+        # 原有本地文件库
+        return SQLiteSessionStore(**kwargs)
+    if raw == "mysql":
+        # 延迟导入，避免没装 pymysql 时拖垮其它 backend
+        from memory.mysql_session_store import MySQLSessionStore
+
+        return MySQLSessionStore(
+            tenant_id_fallback=str(kwargs.get("tenant_id_fallback") or "default")
+        )
+    raise ValueError(f"不支持的后端类型: {backend}, 可选: redis/sqlite/mysql")

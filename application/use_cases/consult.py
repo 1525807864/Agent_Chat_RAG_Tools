@@ -9,14 +9,15 @@ from application.tenancy import (
     tenant_factor_records_path,
     tenant_factor_session_path,
 )
+from billing.turn_helper import safe_record_turn
 from domain.run import RunResult
 from rag.evidence import has_enough_evidence
 from rag.hybrid_retriever import HybridRetriever
 from rag.rag_chain import format_docs
 from rag.sparse_bm25 import BM25SparseIndex
 from rag.structured.consult import run_consult
-from rag.structured.records import (
-    load_record,
+from rag.structured.records import load_record
+from infrastructure.db.consult_factors_store import (
     load_session_factors,
     save_session_factors,
 )
@@ -42,7 +43,7 @@ class ConsultUseCase:
         api_base: Optional[str] = None,
         model_name: Optional[str] = None,
     ) -> RunResult:
-        answer, sources = await self._run(
+        answer, sources, usage_meta = await self._run(
             message,
             tenant_id=tenant_id,
             session_id=session_id,
@@ -52,7 +53,7 @@ class ConsultUseCase:
         )
         return RunResult(
             answer=answer,
-            meta={"capability": "consult", "sources": sources},
+            meta={"capability": "consult", "sources": sources, **usage_meta},
         )
 
     async def _run(
@@ -64,18 +65,23 @@ class ConsultUseCase:
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
-    ) -> tuple[str, list[dict]]:
+    ) -> tuple[str, list[dict], dict]:
         app = self._app
-        blocked = await app.security.guard(question, rate_limit=True)
+        blocked = await app.security.guard(question, rate_limit=False)
         if blocked:
-            return blocked, []
+            return blocked, [], {}
 
         llm = app._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
         records = load_record(tenant_factor_records_path(app.project_root, tenant_id))
         state_path = tenant_factor_session_path(
             app.project_root, tenant_id, session_id
         )
-        factors = load_session_factors(state_path, suffix="")
+        factors = load_session_factors(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            file_path=state_path,
+            suffix="",
+        )
 
         store = app._vector_store_for_tenant(tenant_id)
         bm25 = BM25SparseIndex.load(tenant_bm25_path(app.project_root, tenant_id))
@@ -96,7 +102,7 @@ class ConsultUseCase:
             return format_docs(found)
 
         try:
-            answer, updated = run_consult(
+            answer, updated, turn = run_consult(
                 llm=llm,
                 user_message=question,
                 factors=factors,
@@ -105,9 +111,14 @@ class ConsultUseCase:
             )
         except Exception as e:
             app.logger.error("consult 失败: %s", e)
-            return f"问答出错: {sanitize_exception_message(e)}", []
+            return f"问答出错: {sanitize_exception_message(e)}", [], {}
 
-        save_session_factors(state_path, updated)
+        save_session_factors(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            file_path=state_path,
+            factors=updated,
+        )
         sources = [
             {
                 "doc_id": str(item.get("source") or "record"),
@@ -118,4 +129,10 @@ class ConsultUseCase:
             }
             for item in records[:5]
         ]
-        return answer, sources
+
+        usage_meta: dict = {}
+        # 有 LLM token 才记账；纯规则追问留给 orchestrator 兜底 requests=1
+        if turn.tokens_in or turn.tokens_out:
+            model_str = str(getattr(llm, "model_name", None) or model_name or "")
+            usage_meta = safe_record_turn(app, tenant_id, turn, model=model_str)
+        return answer, sources, usage_meta

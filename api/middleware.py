@@ -1,4 +1,7 @@
-"""安全响应头 + /api 按 IP 限流。"""
+"""安全响应头 + 就绪门闩。
+
+全站 /api IP 限流已关闭；登录/注册限流见 ``api/routes/auth_login.py``。
+"""
 
 from __future__ import annotations
 
@@ -6,11 +9,32 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from api.auth.client_ip import client_ip
-from config.settings import get_settings
-from safety.http_rate_limit import allow_request
-
+# /health、/health/live、/health/ready 都以 /health 开头，一并放行
 _SKIP_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json")
+
+
+class ReadinessGateMiddleware(BaseHTTPMiddleware):
+    """未就绪时拒绝业务流量，避免半初始化接请求。"""
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        path = request.url.path
+        if request.method == "OPTIONS" or any(
+            path.startswith(p) for p in _SKIP_PREFIXES
+        ):
+            return await call_next(request)
+
+        from api.health_state import health_state
+
+        if not health_state.ready:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "service not ready",
+                    "startup_error": health_state.startup_error,
+                },
+                headers={"Retry-After": "3"},
+            )
+        return await call_next(request)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -19,7 +43,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
         response.headers.setdefault("X-XSS-Protection", "0")
         if request.url.scheme == "https":
             response.headers.setdefault(
@@ -30,18 +56,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class ApiRateLimitMiddleware(BaseHTTPMiddleware):
+    """全站 /api 限流已关闭（类保留便于以后重新启用）。"""
+
     async def dispatch(self, request: Request, call_next) -> Response:
-        path = request.url.path
-        if request.method == "OPTIONS" or any(path.startswith(p) for p in _SKIP_PREFIXES):
-            return await call_next(request)
-        if not path.startswith("/api"):
-            return await call_next(request)
-        settings = get_settings()
-        ip = client_ip(request)
-        ok = await allow_request(f"api:{ip}", settings.rate_limit_requests, 60)
-        if not ok:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "请求过于频繁，请稍后再试"},
-            )
         return await call_next(request)

@@ -63,3 +63,6 @@ pytest-mock>=3.14.0
 # ===== Word/Excel 解析（知识库上传） =====
 python-docx>=1.1.0
 openpyxl>=3.1.5
+# ===== 评分与评估 =====
+deepeval>=0.1.0
+deepseek-eval>=0.1.0
