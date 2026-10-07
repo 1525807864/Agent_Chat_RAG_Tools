@@ -2,11 +2,18 @@
  * useChat：对话核心状态；send 可附带 workspace_root + files。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchTenantUsage, postChat, postChatStream } from "../api/endpoints";
+import {
+  fetchTenantUsage,
+  getSessionMemory,
+  postChat,
+  postChatStream,
+} from "../api/endpoints";
 import type {
   LlmSettings,
   Mode,
   MultiMode,
+  TaskCheckEvent,
+  TaskPlan,
   TenantUsageDTO,
   TurnUsage,
   UiMessage,
@@ -45,7 +52,24 @@ export function useChat(llmSettings?: LlmSettings) {
   const [error, setError] = useState<string | null>(null);
   const [useStream, setUseStream] = useState(true);
   const [tenantUsage, setTenantUsage] = useState<TenantUsageDTO | null>(null);
+  // 意图台账（Intent Guard）：意图卡片 + 任务清单 + 进度
+  const [taskPlan, setTaskPlan] = useState<TaskPlan | null>(null);
+  // 最近一次对齐检查结果（drift 拦截展示用）
+  const [lastCheck, setLastCheck] = useState<TaskCheckEvent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  /** 从后端 memory 端点装载意图台账（切会话/加载历史时用） */
+  const loadTaskPlan = useCallback(async (id: string) => {
+    try {
+      const mem = await getSessionMemory(id);
+      setTaskPlan(mem.task_plan?.goal ? (mem.task_plan as TaskPlan) : null);
+      setLastCheck(null);
+    } catch {
+      // 会话无台账或后端未启用时忽略
+      setTaskPlan(null);
+      setLastCheck(null);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +111,8 @@ export function useChat(llmSettings?: LlmSettings) {
 
       setError(null);
       setLoading(true);
+      // 新一轮开始：清掉上一轮的检查结果
+      setLastCheck(null);
 
       // 气泡里只显示用户原话 + 打开文件名提示（不刷全文）
       const fileHint =
@@ -133,6 +159,8 @@ export function useChat(llmSettings?: LlmSettings) {
           const usage = (res.meta?.usage as TurnUsage | undefined) || undefined;
           const tu = res.meta?.tenant_usage as TenantUsageDTO | undefined;
           if (tu) setTenantUsage(tu);
+          const tp = res.meta?.task_plan as TaskPlan | undefined;
+          if (tp && tp.goal) setTaskPlan(tp);
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: text, usage } : m,
@@ -161,6 +189,7 @@ export function useChat(llmSettings?: LlmSettings) {
                 const merged = (answer || acc).trim() ? answer || acc : "";
                 const finalText = merged || emptyAnswerFallback();
                 if (meta?.tenant_usage) setTenantUsage(meta.tenant_usage);
+                if (meta?.task_plan?.goal) setTaskPlan(meta.task_plan);
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantId
@@ -168,6 +197,35 @@ export function useChat(llmSettings?: LlmSettings) {
                       : m,
                   ),
                 );
+              },
+              onTask: (payload) => {
+                // 意图追踪帧：anchor / check / plan_update / finalize
+                const d = payload.data || {};
+                if (payload.type === "check") {
+                  setLastCheck(d as unknown as TaskCheckEvent);
+                } else if (
+                  payload.type === "plan_update" ||
+                  payload.type === "finalize"
+                ) {
+                  const plan = d.plan as TaskPlan | undefined;
+                  if (plan && plan.goal) {
+                    setTaskPlan(plan);
+                  } else if (Array.isArray(d.tasks)) {
+                    setTaskPlan((prev) =>
+                      prev
+                        ? { ...prev, tasks: d.tasks as TaskPlan["tasks"] }
+                        : prev,
+                    );
+                  }
+                } else if (payload.type === "anchor") {
+                  // 锚点帧只带 goal 摘要，不覆盖已装载的完整台账
+                  const goal = typeof d.goal === "string" ? d.goal : "";
+                  if (goal) {
+                    setTaskPlan((prev) =>
+                      prev ? { ...prev, goal } : null,
+                    );
+                  }
+                }
               },
               onError: (detail) => {
                 sawError = true;
@@ -216,6 +274,8 @@ export function useChat(llmSettings?: LlmSettings) {
     setSessionId(id);
     setMessages([]);
     setError(null);
+    setTaskPlan(null);
+    setLastCheck(null);
   }, []);
 
   const newSession = useCallback(() => {
@@ -241,9 +301,12 @@ export function useChat(llmSettings?: LlmSettings) {
     useStream,
     setUseStream,
     tenantUsage,
+    taskPlan,
+    lastCheck,
     send,
     stop,
     switchSession,
     newSession,
+    loadTaskPlan,
   };
 }

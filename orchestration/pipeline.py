@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, AsyncIterator
 
 from application.routing.handoff import try_cursor_answer
 from domain.run import RequestContext, RunResult, StreamEvent
+from observability.langsmith_trace import langsmith_turn
 from observability.tracing import trace
 from orchestration.capabilities import Capability, default_capabilities
 
@@ -27,6 +29,10 @@ class ChatOrchestrator:
 
     async def handle(self, ctx: RequestContext) -> RunResult:
         """返回统一 RunResult；未知 mode 抛 ValueError（由 API 转 400）。"""
+        with langsmith_turn(ctx, name="chat.handle"):
+            return await self._handle_body(ctx)
+
+    async def _handle_body(self, ctx: RequestContext) -> RunResult:
         cursor = await self._try_cursor(ctx)
         if cursor is not None:
             return cursor
@@ -34,6 +40,11 @@ class ChatOrchestrator:
 
     async def stream(self, ctx: RequestContext) -> AsyncIterator[StreamEvent]:
         """流式编排：yield delta，最后一条 kind=final（可带 usage meta）。"""
+        with langsmith_turn(ctx, name="chat.stream"):
+            async for ev in self._stream_body(ctx):
+                yield ev
+
+    async def _stream_body(self, ctx: RequestContext) -> AsyncIterator[StreamEvent]:
         cursor = await self._try_cursor(ctx)
         if cursor is not None:
             yield StreamEvent(kind="delta", text=cursor.answer)
@@ -58,7 +69,36 @@ class ChatOrchestrator:
                 yield ev
             return
 
-        result = await self._run_capability(ctx)
+        # 其它 mode：后台跑能力，期间把 Intent Guard 的 task 帧实时推给前端
+        # （这些模式本非真流式，答案为整段；task 帧只是「执行过程可见」）
+        from dataclasses import replace
+
+        queue: asyncio.Queue = asyncio.Queue()
+        ctx = replace(ctx, task_events=queue)
+        run_task = asyncio.create_task(self._run_capability(ctx))
+        while True:
+            drained = False
+            while True:
+                try:
+                    payload = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                drained = True
+                yield StreamEvent(kind="task", meta=payload)
+            if run_task.done():
+                break
+            if not drained:
+                await asyncio.sleep(0.05)
+
+        # 排空剩余帧（能力结束前最后一瞬间写入的）
+        while True:
+            try:
+                payload = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            yield StreamEvent(kind="task", meta=payload)
+
+        result = await run_task  # 异常在此抛出，由 API 转 error 帧
         yield StreamEvent(kind="delta", text=result.answer)
         yield StreamEvent(
             kind="final",

@@ -193,3 +193,117 @@ export interface UiMessage {
   // 助手气泡下方显示本轮用量
   usage?: TurnUsage;
 }
+
+// ============================================================================
+// Intent Guard：意图追踪与任务完整性（与后端 TaskPlanDTO 对齐）
+// ============================================================================
+
+/** 任务状态机：pending → in_progress → done | blocked | skipped */
+export type TaskStatus =
+  | "pending"
+  | "in_progress"
+  | "done"
+  | "blocked"
+  | "skipped";
+
+/** 任务清单条目 */
+export interface IntentTask {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  closed_by: string;
+  closed_at: string;
+  sort: number;
+  depends_on?: string[];
+  acceptance?: string;
+  bound_action?: string;
+  attempt?: number;
+  evidence?: string;
+}
+
+/** 意图台账快照（SSE done 帧 / GET memory 端点） */
+export interface TaskPlan {
+  goal: string;
+  goal_raw: string;
+  turn_created: number;
+  last_confirmed_turn: number;
+  anchor_history: Array<{
+    goal: string;
+    updated_at: string;
+    reason: string;
+  }>;
+  tasks: IntentTask[];
+  version: number;
+  check_errors: number;
+  drift_count: number;
+  blocked_actions: number;
+}
+
+/** SSE task 帧里 check 子类型的数据 */
+export interface TaskCheckEvent {
+  step?: number;
+  verdict?: string;
+  reason?: string;
+  correction?: string;
+}
+
+/** SSE ``event: task`` 的 payload（四种子类型） */
+export interface TaskEventPayload {
+  type: "anchor" | "check" | "plan_update" | "finalize";
+  data: Record<string, unknown>;
+}
+
+/** GET /api/sessions/{id}/memory 响应 */
+export interface SessionMemoryResponse {
+  session_id: string;
+  intent_hypothesis: string;
+  open_loops: string[];
+  next_questions: Array<{
+    question: string;
+    confidence: number;
+    reason: string;
+  }>;
+  summary: string;
+  task_plan?: TaskPlan;
+}
+/** 测试工作台：被测项目（API camelCase，与 serialize.project_out 对齐） */
+export interface QaProject {
+  id: string;
+  name: string;
+  baseUrl: string;
+  goal: string;
+  createdAt: string;
+  sourceDocs?: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    excerpt: string;
+  }>;
+  tenantId?: string;
+}
+
+/** 测试树上的一条 */
+export interface QaCase {
+  id: string;
+  projectId: string;
+  parentId: string | null;
+  code?: string;
+  title: string;
+  kind: string;
+  requirement: string;
+  fused: string;
+  steps: string[];
+  expected: string;
+  status: string;
+  sourceDocIds?: string[];
+}
+/** 一次冒烟/执行 */
+export interface QaRun {
+  id: string;
+  projectId: string;
+  caseIds: string[];
+  verdict: string;
+  summary: string;
+  artifacts?: Record<string, unknown>;
+  createdAt: string;
+}

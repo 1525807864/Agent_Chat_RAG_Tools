@@ -28,12 +28,13 @@ def mysql_reachable() -> bool:
 
 
 def ensure_all_schemas() -> bool:
-    """执行 sql/p0|p1|p2_schema.sql；成功返回 True。"""
+    """执行 sql/p0|p1|p2|p3_schema.sql；成功返回 True。"""
     root = Path(__file__).resolve().parents[2]
     files = [
         root / "sql" / "p0_schema.sql",
         root / "sql" / "p1_schema.sql",
         root / "sql" / "p2_schema.sql",
+        root / "sql" / "p3_schema.sql",
     ]
     try:
         conn = _connect()
@@ -57,7 +58,7 @@ def ensure_all_schemas() -> bool:
                     if body:
                         cur.execute(body)
         conn.commit()
-        _log.info("MySQL P0/P1/P2 schema 已就绪")
+        _log.info("MySQL P0/P1/P2/P3 schema 已就绪")
         return True
     except Exception as e:  # noqa: BLE001
         _log.warning("ensure_all_schemas 失败: %s", e)

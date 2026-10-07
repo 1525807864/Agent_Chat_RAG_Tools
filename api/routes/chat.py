@@ -141,6 +141,12 @@ async def chat_stream(
                         f"event: message\ndata: "
                         f"{json.dumps({'delta': ev.text, 'done': False}, ensure_ascii=False)}\n\n"
                     )
+                elif ev.kind == "task":
+                    # Intent Guard 意图追踪帧：anchor / check / plan_update / finalize
+                    yield (
+                        f"event: task\ndata: "
+                        f"{json.dumps(ev.meta, ensure_ascii=False)}\n\n"
+                    )
                 elif ev.kind == "final":
                     answer = ev.answer
                     usage_meta = dict(ev.meta or {})
@@ -151,6 +157,7 @@ async def chat_stream(
                 "answer": answer,
                 "usage": usage_meta.get("usage"),
                 "tenant_usage": usage_meta.get("tenant_usage"),
+                "task_plan": usage_meta.get("task_plan"),
             }
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
         except Exception as e:

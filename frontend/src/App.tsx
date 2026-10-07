@@ -1,10 +1,25 @@
 /**
- * App：整页外壳 = 顶栏 + 三栏布局（会话 / 聊天 / 设置）
+ * App：整页外壳 = 顶栏 +（对话三栏 | 测试工作台）
  * ------------------------------------------------
- * 新增能力：顶栏消息气泡图标，点击显示/隐藏左侧会话历史。
+ * workspace=chat：原会话 / 聊天 / 设置
+ * workspace=qa：测试工作台（顶栏按钮切入）
  */
 import { useCallback, useEffect, useState } from "react";
-import { getSessionHistory, waitUntilReady } from "./api/endpoints";
+import { Alert, Button, Space, Tag, Tooltip } from "antd";
+import {
+  CommentOutlined,
+  DownloadOutlined,
+  ExperimentOutlined,
+  LogoutOutlined,
+  MessageOutlined,
+} from "@ant-design/icons";
+import { QaWorkspace } from "./components/QaWorkspace";
+import {
+  desktopDownloadUrl,
+  fetchDesktopDownloadMeta,
+  getSessionHistory,
+  waitUntilReady,
+} from "./api/endpoints";
 import { getApiBase } from "./api/client";
 import { ChatInput } from "./components/ChatInput";
 import { ChatMessages } from "./components/ChatMessages";
@@ -14,6 +29,7 @@ import { LoginPage } from "./components/LoginPage";
 import { ModeBar } from "./components/ModeBar";
 import { SessionList } from "./components/SessionList";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { TaskPlanPanel } from "./components/TaskPlanPanel";
 import { TokenPriceCalculator } from "./components/TokenPriceCalculator";
 import {
   buildMessageWithAttachments,
@@ -26,32 +42,7 @@ import { clearToken, loadToken } from "./auth/token";
 import type { FileTreeNode } from "./types/attachment";
 import type { UiMessage } from "./types/api";
 import { IcpFooter } from "./components/IcpFooter";
-/**
- * ChatBubbleIcon：消息气泡 SVG 图标
- * --------------------------------
- * - 不依赖本地 png，缩放清晰
- * - stroke 用 currentColor，颜色跟随按钮文字色
- */
-function ChatBubbleIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* 圆角矩形 + 左下角小三角，常见「消息」外形 */}
-      <path
-        d="M4 6.5C4 5.12 5.12 4 6.5 4h11C18.88 4 20 5.12 20 6.5v7c0 1.38-1.12 2.5-2.5 2.5H10l-4 3.2V15.5C4.9 15.5 4 14.6 4 13.5v-7z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+import { NexoraLogo } from "./components/NexoraLogo";
 
 /** 把后端历史消息转成界面用的 UiMessage 列表 */
 function toUiMessages(raw: { role: string; content: string }[]): UiMessage[] {
@@ -68,6 +59,15 @@ function toUiMessages(raw: { role: string; content: string }[]): UiMessage[] {
 export default function App() {
   // 有本地 JWT 才进主界面；刷新窗口仍保持登录
   const [loggedIn, setLoggedIn] = useState(() => Boolean(loadToken()));
+  // 桌面壳里已经是客户端，顶栏不再显示下载
+  const inElectron = Boolean(window.electronAPI?.isElectron);
+  const [downloadReady, setDownloadReady] = useState(false);
+  const [downloadDetail, setDownloadDetail] = useState("正在检查安装包…");
+
+  // chat=原三栏对话；qa=测试工作台；hash 刷新后仍停在工作台
+  const [workspace, setWorkspace] = useState<"chat" | "qa">(() =>
+    window.location.hash === "#/qa" ? "qa" : "chat",
+  );
 
   const { settings, draft, setDraft, save, clear, savedHint } = useLlmSettings();
 
@@ -90,10 +90,13 @@ export default function App() {
     useStream,
     setUseStream,
     tenantUsage,
+    taskPlan,
+    lastCheck,
     send,
     stop,
     switchSession,
     newSession,
+    loadTaskPlan,
   } = useChat(settings);
 
   const {
@@ -128,6 +131,29 @@ export default function App() {
    * 默认 true，和改之前行为一致
    */
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    window.location.hash = workspace === "qa" ? "/qa" : "";
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!loggedIn || inElectron) return;
+    let cancelled = false;
+    fetchDesktopDownloadMeta()
+      .then((meta) => {
+        if (cancelled) return;
+        setDownloadReady(meta.available);
+        setDownloadDetail(meta.available ? "" : meta.detail || "安装包尚未发布");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDownloadReady(false);
+        setDownloadDetail("暂时无法获取安装包");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loggedIn, inElectron]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,8 +202,10 @@ export default function App() {
           },
         ]);
       }
+      // 顺带装载意图台账（切会话时面板立即刷新）
+      void loadTaskPlan(id);
     },
-    [setMessages, switchSession],
+    [setMessages, switchSession, loadTaskPlan],
   );
 
   /** 浏览器内存树点选 → 附件 */
@@ -219,11 +247,11 @@ export default function App() {
     },
     [attachments, send, clearAttachments, toPayload],
   );
-  useEffect(()=>{
+  useEffect(() => {
     const onLogout = () => setLoggedIn(false);
-    window.addEventListener("auth:logout",onLogout);
-    return ()=>window.removeEventListener("auth:logout",onLogout);
-  },[]);
+    window.addEventListener("auth:logout", onLogout);
+    return () => window.removeEventListener("auth:logout", onLogout);
+  }, []);
   const canEmptySend =
     (hasDesktopFs && openFiles.length > 0) || attachments.length > 0;
 
@@ -235,130 +263,172 @@ export default function App() {
   return (
     /**
      * app-shell：整页外壳
-     * 上：顶栏（品牌 + 消息图标）
-     * 下：三栏（左会话 / 中聊天 / 右设置）
+     * 上：顶栏（品牌 + 消息图标 + 测试工作台入口）
+     * 下：对话三栏 或 测试工作台
      */
     <div className="app-shell">
-      {/* ========== 顶部栏：品牌名 + 侧栏开关 ========== */}
-      <header className="app-header">
+      <header className="app-header ant-app-header">
         <div className="app-header-brand">
-          {/* 小圆点模拟 logo */}
-          <span className="app-header-dot" aria-hidden="true" />
-          <span className="app-header-title">LangChain Demo Agent</span>
+          <NexoraLogo />
+          <span className="app-header-title">Nexora</span>
+          <Tag color="processing" className="app-header-badge">
+            衡知
+          </Tag>
         </div>
 
-        {/*
-          消息图标按钮：标题右侧
-          - type="button"：避免被当成表单 submit
-          - aria-pressed：当前是开还是关
-          - title / aria-label：悬停与读屏提示
-        */}
-        <button
-          type="button"
-          className={
-            sidebarOpen ? "sidebar-toggle is-active" : "sidebar-toggle"
-          }
-          onClick={toggleSidebar}
-          aria-pressed={sidebarOpen}
-          aria-label={sidebarOpen ? "隐藏聊天历史" : "显示聊天历史"}
-          title={sidebarOpen ? "隐藏聊天历史" : "显示聊天历史"}
-        >
-          <ChatBubbleIcon />
-        </button>
-        <div className="app-header-spacer" />
-        {tenantUsage ? (
-          <span className="token-bar" title="租户累计 Token（Redis）">
-            输入Token {tenantUsage.tokens_in} | 输出Token {tenantUsage.tokens_out} | 请求数 {tenantUsage.requests} · req{" "}
-          </span>
+        {workspace === "chat" ? (
+          <Tooltip title={sidebarOpen ? "隐藏聊天历史" : "显示聊天历史"}>
+            <Button
+              type={sidebarOpen ? "primary" : "text"}
+              icon={<CommentOutlined />}
+              onClick={toggleSidebar}
+              aria-pressed={sidebarOpen}
+              aria-label={sidebarOpen ? "隐藏聊天历史" : "显示聊天历史"}
+            />
+          </Tooltip>
         ) : null}
-        <TokenPriceCalculator tenantUsage={tenantUsage} />
-        <button
-          type="button"
-          className="btn"
-          onClick={() => {
-            clearToken();
-            setLoggedIn(false);
-          }}
-        >
-          退出登录
-        </button>
+
+        <div className="app-header-spacer" />
+
+        <Space size={8} wrap>
+          <Button
+            type={workspace === "qa" ? "primary" : "default"}
+            icon={
+              workspace === "qa" ? <MessageOutlined /> : <ExperimentOutlined />
+            }
+            onClick={() => setWorkspace(workspace === "qa" ? "chat" : "qa")}
+          >
+            {workspace === "qa" ? "返回对话" : "测试工作台"}
+          </Button>
+
+          {!inElectron &&
+            (downloadReady ? (
+              <Button
+                icon={<DownloadOutlined />}
+                href={desktopDownloadUrl()}
+                target="_blank"
+                rel="noreferrer"
+              >
+                下载客户端
+              </Button>
+            ) : (
+              <Tooltip title={downloadDetail}>
+                <Button icon={<DownloadOutlined />} disabled>
+                  下载客户端
+                </Button>
+              </Tooltip>
+            ))}
+
+          {tenantUsage ? (
+            <Tag className="token-bar" title="租户累计 Token（Redis）">
+              入 {tenantUsage.tokens_in} · 出 {tenantUsage.tokens_out} · 请求{" "}
+              {tenantUsage.requests}
+            </Tag>
+          ) : null}
+
+          <TokenPriceCalculator tenantUsage={tenantUsage} />
+
+          <Button
+            icon={<LogoutOutlined />}
+            onClick={() => {
+              clearToken();
+              setLoggedIn(false);
+            }}
+          >
+            退出
+          </Button>
+        </Space>
       </header>
 
-      {/*
-        三栏网格；sidebar-collapsed 时左列宽度为 0
-      */}
-      <div className={sidebarOpen ? "app" : "app sidebar-collapsed"}>
-        {/* 仅打开时挂载左侧会话列表 */}
-        {sidebarOpen && (
-          <SessionList
-            currentId={sessionId}
-            onSelect={(id) => void loadSession(id)}
-            onNew={newSession}
-          />
-        )}
+      {workspace === "qa" ? (
+        <QaWorkspace />
+      ) : (
+        /*
+          三栏网格；sidebar-collapsed 时左列宽度为 0
+        */
+        <div className={sidebarOpen ? "app" : "app sidebar-collapsed"}>
+          {/* 仅打开时挂载左侧会话列表 */}
+          {sidebarOpen && (
+            <SessionList
+              currentId={sessionId}
+              onSelect={(id) => void loadSession(id)}
+              onNew={newSession}
+            />
+          )}
 
-        <main className="main">
-          <ModeBar
-            mode={mode}
-            setMode={setMode}
-            multiMode={multiMode}
-            setMultiMode={setMultiMode}
-            agentName={agentName}
-            setAgentName={setAgentName}
-            e2eBaseUrl={e2eBaseUrl}
-            setE2eBaseUrl={setE2eBaseUrl}
-            qaTenantId={qaTenantId}
-            setQaTenantId={setQaTenantId}
-            useStream={useStream}
-            setUseStream={setUseStream}
-            healthLabel={healthLabel}
-            healthOk={healthOk}
-          />
+          <main className="main">
+            <ModeBar
+              mode={mode}
+              setMode={setMode}
+              multiMode={multiMode}
+              setMultiMode={setMultiMode}
+              agentName={agentName}
+              setAgentName={setAgentName}
+              e2eBaseUrl={e2eBaseUrl}
+              setE2eBaseUrl={setE2eBaseUrl}
+              qaTenantId={qaTenantId}
+              setQaTenantId={setQaTenantId}
+              useStream={useStream}
+              setUseStream={setUseStream}
+              healthLabel={healthLabel}
+              healthOk={healthOk}
+            />
 
-          {error && <div className="error-banner">{error}</div>}
+            {error ? (
+              <Alert
+                type="error"
+                showIcon
+                closable={false}
+                message={error}
+                className="error-banner"
+              />
+            ) : null}
 
-          <ChatMessages messages={messages} loading={loading} />
+            <TaskPlanPanel taskPlan={taskPlan} lastCheck={lastCheck} />
 
-          <FileToolbar
-            attachments={attachments}
-            error={attachError}
-            disabled={loading}
-            onAddFiles={addFiles}
-            onRemove={remove}
-            onClear={clearAttachments}
-            onPickTreeFile={onPickTreeFile}
-            workspace={{
-              root,
-              tree,
-              openFiles,
-              error: wsError,
-              hasDesktopFs,
-              onOpenWorkspace: openWorkspace,
-              onListChildren: listChildren,
-              onOpenFile: openFile,
-              onRemoveOpenFile: removeOpenFile,
-            }}
-          />
+            <ChatMessages messages={messages} loading={loading} />
 
-          <ChatInput
-            loading={loading}
-            onSend={(t) => void handleSend(t)}
-            onStop={stop}
-            allowEmptySend={canEmptySend}
-          />
-        </main>
+            <FileToolbar
+              attachments={attachments}
+              error={attachError}
+              disabled={loading}
+              onAddFiles={addFiles}
+              onRemove={remove}
+              onClear={clearAttachments}
+              onPickTreeFile={onPickTreeFile}
+              workspace={{
+                root,
+                tree,
+                openFiles,
+                error: wsError,
+                hasDesktopFs,
+                onOpenWorkspace: openWorkspace,
+                onListChildren: listChildren,
+                onOpenFile: openFile,
+                onRemoveOpenFile: removeOpenFile,
+              }}
+            />
 
-        <div className="side-stack">
-          <SettingsPanel
-            draft={draft}
-            setDraft={setDraft}
-            onSave={save}
-            onClear={clear}
-            savedHint={savedHint}
-          />
-          <KnowledgePanel />
+            <ChatInput
+              loading={loading}
+              onSend={(t) => void handleSend(t)}
+              onStop={stop}
+              allowEmptySend={canEmptySend}
+            />
+          </main>
+
+          <div className="side-stack">
+            <SettingsPanel
+              draft={draft}
+              setDraft={setDraft}
+              onSave={save}
+              onClear={clear}
+              savedHint={savedHint}
+            />
+            <KnowledgePanel />
+          </div>
         </div>
-      </div>
+      )}
       <IcpFooter />
     </div>
   );

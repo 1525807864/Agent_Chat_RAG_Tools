@@ -1,21 +1,49 @@
 // ============================================================================
 // 前端入口文件 main.tsx：浏览器最先执行的模块之一
 // ============================================================================
-// 从 React 包导入命名空间对象（StrictMode 要用 React.StrictMode）
 import React from "react";
-// 从 react-dom/client 导入 React 18 的根 API（createRoot）
 import ReactDOM from "react-dom/client";
-// 导入页面根组件（整个 UI 从 App 展开）
+import { ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN";
 import App from "./App";
-// 导入全局 CSS，让 Vite 把它注入到页面（副作用导入，无绑定名）
 import "./styles/index.css";
+import "./styles/qa-workbench.css";
 
-// 在 DOM 里找到 id="root" 的节点；! 告诉 TypeScript「一定存在，不是 null」
-// createRoot：创建 React 18 并发根，替代旧版 ReactDOM.render
+/** Nexora 商业青绿主题：与测试平台 / 品牌色一致 */
+const nexoraTheme = {
+  token: {
+    colorPrimary: "#0f766e",
+    colorInfo: "#0f766e",
+    colorSuccess: "#0f766e",
+    colorLink: "#0f766e",
+    borderRadius: 8,
+    fontFamily:
+      '"Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif',
+    colorBgLayout: "#f3f5f7",
+    colorText: "#1a2332",
+    colorBorder: "#d8dee6",
+  },
+  components: {
+    Button: {
+      controlHeight: 32,
+      fontWeight: 500,
+    },
+    Menu: {
+      darkItemBg: "transparent",
+      darkItemSelectedBg: "#0f766e",
+      darkItemHoverBg: "rgba(15, 118, 110, 0.35)",
+    },
+    Layout: {
+      headerBg: "#ffffff",
+      siderBg: "#0f172a",
+    },
+  },
+};
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  // StrictMode：开发环境额外检查（Effect 可能跑两次），帮助发现副作用问题
   <React.StrictMode>
-    {/* 真正挂载业务根组件 */}
-    <App />
+    <ConfigProvider locale={zhCN} theme={nexoraTheme}>
+      <App />
+    </ConfigProvider>
   </React.StrictMode>,
-); // render 调用结束
+);

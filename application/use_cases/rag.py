@@ -30,17 +30,21 @@ class RagUseCase:
         message: str, #用户问题
         *,
         tenant_id: str = "default", #租户，记账key
+        session_id: str = "default",
         api_key: Optional[str] = None, #api key，可选
         api_base: Optional[str] = None, #api base，可选
         model_name: Optional[str] = None, #模型，记账meta
+        task_events=None,
     ) -> RunResult:
         # _run现在多返回usage_meta（可能是{}）
         answer, sources, usage_meta = await self._run(
             message,
             tenant_id=tenant_id,
+            session_id=session_id,
             api_key=api_key,
             api_base=api_base,
             model_name=model_name,
+            task_events=task_events,
         )
         return RunResult( #usage_meta可能为{}，不影响前端
             answer=answer,
@@ -52,14 +56,33 @@ class RagUseCase:
         question: str,
         *,
         tenant_id: str = "default",
+        session_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
+        task_events=None,
     ) -> tuple[str, list[dict],dict]:
         app = self._app
         blocked = await app.security.guard(question, rate_limit=False)
         if blocked:
             return blocked, [], {}
+
+        if app.memory is None:
+            await app.init_session_store()
+        guard = app.intent_guard_for(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            api_key=api_key,
+            api_base=api_base,
+            model_name=model_name,
+            event_sink=task_events,
+        )
+        if guard is not None:
+            try:
+                await guard.ensure_anchor(user_input=question)
+                await guard.pre_turn_check(user_input=question)
+            except Exception as e:  # noqa: BLE001
+                app.logger.warning("意图守卫回合前检查失败: %s", e)
 
         llm = app._resolve_llm(api_key=api_key, api_base=api_base, model_name=model_name)
         store = app._vector_store_for_tenant(tenant_id)
@@ -107,18 +130,24 @@ class RagUseCase:
         context = format_docs(docs) #把文档拼进prompt的context里面
 
         try:
-            chain = RAG_PROMPT | llm 
+            chain = RAG_PROMPT | llm
             # 调用大模型，得到AIMessage
             ai_msg = chain.invoke({"context": context, "question": question})
             # 从消息取文本答案
             raw = getattr(ai_msg,"content",ai_msg)
             answer = raw if isinstance(raw,str) else str(raw or "")
+            # 意图守卫收尾：完成度校验 + 按需追加未完成清单
+            intent_meta: dict = {}
+            if guard is not None:
+                answer, intent_meta = await guard.close_turn(
+                    user_input=question, answer=answer
+                )
             #模型名
             model_str = str(getattr(llm,"model_name",None) or model_name or "")
             #从空回合合并本条消息的token
             turn = merge_message(empty_turn(model=model_str),ai_msg,model=model_str)
             # 安全记录回合用量，返回前端meta
-            usage_meta = safe_record_turn(app,tenant_id,turn,model=model_str)
+            usage_meta = {**safe_record_turn(app,tenant_id,turn,model=model_str), **intent_meta}
             # 记录日志
             trace(
                 "rag_ask_hybrid",

@@ -46,3 +46,17 @@ export function authHeaders(): Record<string,string> {
     }
 }
 
+/** 从 JWT 里读 tenant_id，只解码不验签，给测试壳分桶用 */
+export function readTenantId(): string {
+    const token = loadToken(); // 没有登录就用 default
+    if (!token) return "default";
+    try {
+      const part = token.split(".")[1] || ""; // JWT 第二段是 payload
+      const b64 = part.replace(/-/g, "+").replace(/_/g, "/"); // URL-safe 转标准 base64
+      const json = JSON.parse(atob(b64)) as { tenant_id?: string };
+      const id = (json.tenant_id || "").trim();
+      return id || "default";
+    } catch {
+      return "default"; // 坏 token 时不要抛，避免工作台白屏
+    }
+  }

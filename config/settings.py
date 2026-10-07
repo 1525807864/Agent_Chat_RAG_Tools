@@ -52,6 +52,12 @@ CURSOR_API_KEY = os.getenv("CURSOR_API_KEY", "")
 CURSOR_MODEL = os.getenv("CURSOR_MODEL", "composer-2.5")
 #记忆配置
 MEMORY_WINDOW_SIZE = 10
+#langsmith 
+langsmith_tracing: bool = Field(default=False,alias="LANGSMITH_TRACING")
+langsmith_api_key: str = Field(default="",alias="LANGSMITH_API_KEY")
+langsmith_project: str = Field(default="nexora",alias="LANGSMITH_PROJECT")
+
+
 
 #pydantic配置类(类型安全+自动校验)
 class Settings(BaseSettings):
@@ -175,6 +181,50 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
         alias="MEMORY_RELEVANCE_TOP_K",
+    )
+    # ===== 意图追踪与任务完整性维护（Intent Guard） =====
+    intent_guard_enabled: bool = Field(
+        default=True,
+        alias="INTENT_GUARD_ENABLED",
+        description="是否启用意图守卫；false 时行为与旧版完全一致",
+    )
+    intent_check_model_name: str = Field(
+        default="",
+        alias="INTENT_CHECK_MODEL_NAME",
+        description="对齐检查模型；空=与主模型相同",
+    )
+    intent_check_timeout_seconds: float = Field(
+        default=3.0,
+        ge=0.5,
+        le=30.0,
+        alias="INTENT_CHECK_TIMEOUT_SECONDS",
+        description="单次对齐检查超时（秒），超时 fail-open 放行",
+    )
+    intent_check_max_per_turn: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        alias="INTENT_CHECK_MAX_PER_TURN",
+        description="单回合最多执行多少次 pre-step 检查",
+    )
+    intent_max_tasks: int = Field(
+        default=8,
+        ge=1,
+        le=20,
+        alias="INTENT_MAX_TASKS",
+        description="任务拆解的子任务上限",
+    )
+    intent_append_open_tasks_notice: bool = Field(
+        default=True,
+        alias="INTENT_APPEND_OPEN_TASKS_NOTICE",
+        description="回合结束时是否在答案尾部追加【未完成任务清单】",
+    )
+    intent_drift_reanchor_threshold: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        alias="INTENT_DRIFT_REANCHOR_THRESHOLD",
+        description="同回合连续几次 drift 判定为用户真实转向（re-anchor）",
     )
     #RAG配置
     chunk_size:int = Field(
@@ -392,6 +442,34 @@ class Settings(BaseSettings):
         alias="ALLOW_REGISTER",
         description="是否开放 POST /api/auth/register",
     )
+    desktop_download_enabled: bool = Field(
+        default=True,
+        alias="DESKTOP_DOWNLOAD_ENABLED",
+        description="是否开放 GET /api/downloads/desktop",
+    )
+    desktop_release_dir: str = Field(
+        default="downloads",
+        alias="DESKTOP_RELEASE_DIR",
+        description="安装包目录，相对项目根或绝对路径。把 Nexora-Setup.exe 放这里",
+    )
+    desktop_release_name: str = Field(
+        default="Nexora-Setup.exe",
+        alias="DESKTOP_RELEASE_NAME",
+        description="目录内的安装包文件名，只允许单层 .exe 名",
+    )
+    desktop_release_max_bytes: int = Field(
+        default=800 * 1024 * 1024,
+        alias="DESKTOP_RELEASE_MAX_BYTES",
+        ge=1,
+        description="安装包大小上限，超过则拒绝下载",
+    )
+    desktop_download_rate_limit: int = Field(
+        default=20,
+        alias="DESKTOP_DOWNLOAD_RATE_LIMIT",
+        ge=1,
+        le=120,
+        description="同一 IP 每分钟最多下载次数（含 meta 查询分开计数）",
+    )
     strict_production: bool = Field(
         default=False,
         alias="STRICT_PRODUCTION",
@@ -419,7 +497,55 @@ class Settings(BaseSettings):
         alias="ALLOWED_HOSTS",
         description="TrustedHost 白名单，逗号分隔；* 表示不启用",
     )
-
+    # 总开关:false时行为与旧版一致，便于回滚
+    memory_v2_enabled: bool = Field(
+        default=True,
+        alias="MEMORY_V2_ENABLED",
+        description="启用查询改写/槽位/语义记忆抽取与混合召回",
+    )
+    # 短句指代补全（「今天有雨吗」→「北京今天有雨吗」）
+    memory_query_rewrite_enabled: bool = Field(
+        default=True,
+        alias="MEMORY_QUERY_REWRITE_ENABLED",
+        description="Memory V2：短句/省略主语查询改写",
+    )
+    # 每轮结束后抽取可复用事实
+    memory_fact_extract_enabled: bool = Field(
+        default=True,
+        alias="MEMORY_FACT_EXTRACT_ENABLED",
+    )
+    # 语义召回 top_k
+    memory_semantic_top_k: int = Field(default=6, ge=1, le=20)
+    # 摘要最大 token
+    memory_summary_max_tokens: int = Field(default=480, ge=100, le=2000)
+    # 压缩触发：消息条数 / token 阈值
+    memory_compress_min_messages: int = Field(default=12, ge=4, le=100)
+    memory_compress_max_context_tokens: int = Field(default=3500, ge=1000)
+    # 语义记忆落盘根（按 tenant 分子目录）
+    memory_semantic_path: str = Field(
+        default="data/memory_semantic",
+        alias="MEMORY_SEMANTIC_PATH",
+    )
+    langsmith_tracing: bool = Field(
+        default=False,
+        alias="LANGSMITH_TRACING",
+        description="是否向 LangSmith 上报；无密钥时启动会 fail-open",
+    )
+    langsmith_api_key: str = Field(
+        default="",
+        alias="LANGSMITH_API_KEY",
+        description="LangSmith API Key（lsv2_ 开头）；不要提交到仓库",
+    )
+    langsmith_project: str = Field(
+        default="nexora",
+        alias="LANGSMITH_PROJECT",
+        description="LangSmith 项目名，开发/生产请分开",
+    )
+    langsmith_endpoint: str = Field(
+        default="",
+        alias="LANGSMITH_ENDPOINT",
+        description="留空用官方默认；不要写成本机 FastAPI 的 LANGCHAIN_API_BASE",
+    )
 
 
     # 安全

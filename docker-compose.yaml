@@ -40,8 +40,12 @@ services:
       MYSQL_USER: ${MYSQL_USER:-langchain_demo}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-langchain_demo}
+      DESKTOP_RELEASE_DIR: /app/downloads
+      DESKTOP_RELEASE_NAME: Nexora-Setup.exe
     volumes:
       - app_data:/app/data
+      # 安装包不打进镜像。把 Nexora-Setup.exe 放到仓库 downloads/ 后重启 api
+      - ./downloads:/app/downloads:ro
     depends_on:
       redis:
         condition: service_started

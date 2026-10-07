@@ -246,6 +246,18 @@ class ReActAgent(BaseAgent):
         if context and context.get("format_reminder"):
             messages.append(HumanMessage(content=str(context["format_reminder"])))
 
+        # 目标对齐提醒（意图守卫拦截偏离动作后由 run() 写入）
+        if context and context.get("intent_reminder"):
+            messages.append(
+                HumanMessage(
+                    content=(
+                        "【目标对齐提醒】\n"
+                        f"{context['intent_reminder']}\n"
+                        "请基于以上提醒重新思考，输出与用户目标一致的 Action 或 Final Answer。"
+                    )
+                )
+            )
+
         if context and "last_tool_result" in context:
             messages.append(
                 HumanMessage(
@@ -266,15 +278,28 @@ class ReActAgent(BaseAgent):
         return text, response
 
     def _force_web_search(self, task: str, context: Optional[dict]) -> dict:
-        """模型拒不按 ReAct 格式调用时，直接执行一次 web_search，避免空跑。"""
+        """模型拒不按 ReAct 格式调用时，直接执行一次 web_search，避免空跑。
+
+        商业要点：优先用 context['search_query']（经 Memory V2 改写的完整问句），
+        避免「今天有雨吗」丢掉上一轮「我在北京」。
+        """
         tool = self._get_tool_by_name("web_search")
         if not tool:
             return context or {}
-        query = (task or "").strip()
+        query = ""
+        if context:
+            query = str(context.get("search_query") or "").strip()
+        if not query:
+            query = (task or "").strip()
         # 去掉过长前缀，保留检索核心
         if len(query) > 1000:
             query = query[:1000]
-        _log.info("[%s] 强制调用 web_search query=%s", self.name, query[:80])
+        _log.info(
+            "[%s] 强制调用 web_search query=%s (from_search_query=%s)",
+            self.name,
+            query[:80],
+            bool(context and context.get("search_query")),
+        )
         obs = self._invoke_tool(tool, {"query": query})
         return (context or {}) | {"last_tool_result": obs, "forced_search": True}
 
@@ -400,20 +425,96 @@ class ReActAgent(BaseAgent):
 
             consecutive_parse_failures = 0
 
+            # ---------- 意图守卫：执行前做「目标对齐检查」 ----------
+            # guard 由 use_case 经 run_context 注入；检查失败 / 无 guard 时行为不变
+            guard = (context or {}).get("intent_guard")
+            if guard is not None:
+                check = await guard.check_step(
+                    task=task,
+                    iteration=iteration,
+                    thought=thought,
+                    action_name=action_name,
+                    action_input=action_input,
+                )
+                if check.get("_msg") is not None:
+                    usage_acc = merge_message(usage_acc, check["_msg"], model=model_str)
+                if check.get("verdict") == "drift":
+                    tool_calls_log.append(
+                        {
+                            "iteration": iteration,
+                            "tool": action_name,
+                            "input": action_input,
+                            "blocked_by_intent": True,
+                            "reason": check.get("reason", ""),
+                            "correction": check.get("correction", ""),
+                        }
+                    )
+                    context = (context or {}) | {
+                        "intent_reminder": check.get("correction")
+                        or check.get("reason")
+                        or "请回到用户最初的目标继续执行"
+                    }
+                    _log.info(
+                        "[%s] 意图守卫拦截 %s: %s",
+                        self.name,
+                        action_name,
+                        check.get("reason", ""),
+                    )
+                    continue
+                # 动作已放行，清掉上一轮的纠偏提醒，避免残留
+                if context and "intent_reminder" in context:
+                    context.pop("intent_reminder", None)
+
+            if guard is not None:
+                try:
+                    guard.claim_task(action_name=action_name)
+                except Exception:  # noqa: BLE001
+                    _log.debug("claim_task 失败，不影响工具执行", exc_info=True)
+
             tool = self._get_tool_by_name(action_name)
             if tool:
+                # ★ 商业：web_search 且模型给的 query 过短时，用 Memory 改写句替换
+                if (
+                    action_name == "web_search"
+                    and context
+                    and context.get("search_query")
+                ):
+                    ai = action_input if isinstance(action_input, dict) else {}
+                    q = str((ai or {}).get("query") or "").strip()
+                    enriched = str(context.get("search_query") or "").strip()
+                    if enriched and (len(q) < 12 or q in ("今天", "天气", "怎么样")):
+                        action_input = {**(ai or {}), "query": enriched}
+                        _log.info(
+                            "[%s] web_search query 已用 search_query 增强: %s",
+                            self.name,
+                            enriched[:80],
+                        )
                 obs = await self._ainvoke_tool(tool, action_input)
+                obs_text = str(obs)
+                ok = bool(obs_text.strip()) and not obs_text.startswith("错误")
+                if guard is not None:
+                    try:
+                        guard.complete_active_task(ok=ok, evidence=obs_text[:400])
+                    except Exception:  # noqa: BLE001
+                        _log.debug("complete_active_task 失败", exc_info=True)
                 tool_calls_log.append(
                     {
                         "iteration": iteration,
                         "tool": action_name,
                         "input": action_input,
-                        "output": str(obs)[:800],
+                        "output": obs_text[:800],
                     }
                 )
-                context = (context or {}) | {"last_tool_result": str(obs)}
-                _log.info("[%s] 工具 %s 完成, obs_len=%s", self.name, action_name, len(str(obs)))
+                context = (context or {}) | {"last_tool_result": obs_text}
+                _log.info("[%s] 工具 %s 完成, obs_len=%s", self.name, action_name, len(obs_text))
             else:
+                if guard is not None:
+                    try:
+                        guard.complete_active_task(
+                            ok=False, evidence=f"未找到工具 {action_name}"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                 context = (context or {}) | {
                     "last_tool_result": f"错误: 未找到工具 '{action_name}'，可用: "
                     f"{[t.name for t in self.tools]}"

@@ -45,9 +45,10 @@ class AgentUseCase:
         active_file: Optional[str] = None,
         e2e_base_url: Optional[str] = None,
         qa_tenant_id: Optional[str] = None,
+        task_events=None,                      # Intent Guard SSE 事件队列
     ) -> RunResult:
         # _run 负责真正推理；这里只记账 + 包成 RunResult
-        answer, usage_dict = await self._run(
+        answer, usage_dict, intent_meta = await self._run(
             message,
             session_id=session_id,             # ★ 往下传，不要再丢掉
             tenant_id=tenant_id,               # ★ 审计 / 计费租户
@@ -60,6 +61,7 @@ class AgentUseCase:
             active_file=active_file,
             e2e_base_url=e2e_base_url,
             qa_tenant_id=qa_tenant_id,
+            task_events=task_events,
         )
         usage_meta: dict = {}
         if usage_dict:
@@ -71,7 +73,10 @@ class AgentUseCase:
                 model=str(usage_dict.get("model") or ""),
             )
             usage_meta = safe_record_turn(self._app, tenant_id, turn)
-        return RunResult(answer=answer, meta={"capability": "agent", **usage_meta})
+        return RunResult(
+            answer=answer,
+            meta={"capability": "agent", **usage_meta, **intent_meta},
+        )
 
     async def _run(
         self,
@@ -88,7 +93,8 @@ class AgentUseCase:
         active_file: str | None = None,
         e2e_base_url: str | None = None,
         qa_tenant_id: str | None = None,
-    ) -> tuple[str, dict | None]:
+        task_events=None,                      # Intent Guard SSE 事件队列
+    ) -> tuple[str, dict | None, dict]:
         app = self._app
         import time
 
@@ -97,7 +103,7 @@ class AgentUseCase:
         # 安全护栏：限流 / 注入检测等，命中则直接返回提示、不调 LLM
         blocked = await app.security.guard(task, rate_limit=False)
         if blocked:
-            return blocked, None
+            return blocked, None, {}
 
         # 没指定 active_file 时，用附件列表第一个路径（给 Skills 用）
         if not active_file and files:
@@ -142,14 +148,29 @@ class AgentUseCase:
         # ---------- 装载本会话历史 + memdir 摘要（和 chat 同一套）----------
         memory_extra = ""                      # 塞进 system 的【历史摘要】【记忆块】
         history_dicts: list[dict] = []         # [{role, content}, ...] 给 ReAct 拼消息
+        agent_task = effective_task            # V2 可能改成 rewritten_query
+        rewrite_meta: dict = {}
         if app.memory is not None:
-            # load_turn_context：读 session_store 最近消息 + memdir 相关条目 + Solip
+            # load_turn_context：读 session_store + 槽位 +（V2）查询改写 / 混合召回
             turn_ctx = await app.memory.load_turn_context(
                 memory_session_id,
                 effective_task,
+                tenant_id=tenant_id,
             )
             memory_extra = turn_ctx.system_extra() or ""
             history_dicts = list(turn_ctx.recent_messages or [])
+            # ★ 商业：Agent「任务」用改写后的完整句；落库仍用用户原文 task
+            if getattr(turn_ctx, "rewritten_query", None):
+                agent_task = turn_ctx.rewritten_query
+            rewrite_meta = dict(getattr(turn_ctx, "rewrite_meta", None) or {})
+            app.logger.info(
+                "memory.load session=%s tenant=%s rewrite=%s changed=%s hist=%s",
+                memory_session_id,
+                tenant_id,
+                rewrite_meta.get("reason"),
+                agent_task != effective_task,
+                len(history_dicts),
+            )
 
         # ---------- 解析 LLM（skill 模型优先）----------
         llm = app._resolve_llm(
@@ -158,6 +179,23 @@ class AgentUseCase:
             model_name=skill_model or model_name,
             temperature=skill_temp,
         )
+
+        # ---------- 意图守卫（目标对齐检查 + 任务完整性维护） ----------
+        # 失败 / 关闭时 guard=None，Agent 行为与旧版完全一致（fail-open）
+        guard = app.intent_guard_for(
+            session_id=memory_session_id,
+            tenant_id=tenant_id,
+            api_key=api_key,
+            api_base=api_base,
+            model_name=skill_model or model_name,
+            event_sink=task_events,
+        )
+        if guard is not None:
+            try:
+                await guard.ensure_anchor(user_input=task)
+            except Exception as e:  # noqa: BLE001
+                app.logger.warning("意图守卫锚点建立失败，本回合关闭: %s", e)
+                guard = None
 
         # ---------- 是否走 E2E Playwright ----------
         locked = (e2e_base_url or "").strip()
@@ -194,15 +232,28 @@ class AgentUseCase:
         else:
             memory_block_for_prompt = _CTX_RULE
 
-        # 附件路径前缀 + 本轮用户话
+        # 附件路径前缀 + 本轮用户话（V2：agent_task 可能已补全省略主语）
         prefix = build_files_prefix(files)
-        full_task = prefix + "用户请求：\n" + effective_task
+        full_task = prefix + "用户请求：\n" + agent_task
 
         # 传给 ReActAgent.run / think 的上下文：历史 +（循环中会加 Observation）
         run_context: dict = {
             "history": history_dicts,          # ★ 多轮对话
             "session_id": memory_session_id,   # 日志/调试用
+            "intent_guard": guard,             # 意图守卫（None=关闭）
+            # ★ 强制搜索 / 工具 query 优先用改写句，避免「今天有雨吗」丢地点
+            "search_query": agent_task,
+            "rewrite_meta": rewrite_meta,
         }
+
+        async def _finalize_intent(answer: str) -> tuple[str, dict]:
+            """回合后完成度校验：闭环子任务；按需追加未完成清单。
+
+            返回 (最终答案, intent_meta)（intent_meta 含 task_plan 快照）。
+            """
+            if guard is None:
+                return answer, {}
+            return await guard.close_turn(user_input=task, answer=answer)
 
         async def _persist_answer(answer: str, result: dict | None = None) -> None:
             """推理成功后：落库本轮 user/assistant，并后台 compact + 审计。"""
@@ -219,6 +270,7 @@ class AgentUseCase:
                             session_id=memory_session_id,
                             user_input=task,
                             assistant_output=answer,
+                            tenant_id=tenant_id,
                         )
                     except Exception as exc:  # noqa: BLE001
                         app.logger.warning("后台 Solip/Compact 失败: %s", exc)
@@ -286,8 +338,9 @@ class AgentUseCase:
                     result = await agent.run(full_task, run_context)
                     usage = result.get("usage") if isinstance(result, dict) else None
                     answer = result.get("result", "无结果")
+                    answer, intent_meta = await _finalize_intent(answer)
                     await _persist_answer(answer, result if isinstance(result, dict) else None)
-                    return answer, usage if isinstance(usage, dict) else None
+                    return answer, usage if isinstance(usage, dict) else None, intent_meta
             except Exception as e:  # noqa: BLE001
                 app.logger.error("Playwright MCP 失败: %s", e)
                 try:
@@ -304,7 +357,7 @@ class AgentUseCase:
                     )
                 except Exception:  # noqa: BLE001
                     pass
-                return f"E2E 启动失败: {sanitize_exception_message(e)}", None
+                return f"E2E 启动失败: {sanitize_exception_message(e)}", None, {}
 
         # ---------- 普通 / 编程 Agent ----------
         if system_prompt is None:
@@ -328,8 +381,10 @@ class AgentUseCase:
             result = await agent.run(full_task, run_context)
             usage = result.get("usage") if isinstance(result, dict) else None
             answer = result.get("result", "无结果")
+            answer, intent_meta = await _finalize_intent(answer)
             await _persist_answer(answer, result if isinstance(result, dict) else None)
             return (
                 answer,
                 usage if isinstance(usage, dict) else None,
+                intent_meta,
             )

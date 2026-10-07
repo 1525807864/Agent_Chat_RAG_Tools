@@ -10,9 +10,9 @@
   --border: #d8dee6; /* 统一边框色 */
   --text: #1a2332; /* 主文字色 */
   --muted: #5c6b7a; /* 次要文字色 */
-  --accent: #0f6e56; /* 主色（按钮/用户气泡） */
-  --accent-soft: #e6f4ef; /* 主色浅底（hover/选中） */
-  --user-bubble: #0f6e56; /* 用户气泡背景 */
+  --accent: #0f766e; /* Nexora 青绿主色 */
+  --accent-soft: #ecfdf5; /* 主色浅底（hover/选中） */
+  --user-bubble: #6c7b77; /* 用户气泡背景 */
   --assistant-bubble: #eef1f5; /* 助手气泡背景 */
   --danger: #b42318; /* 危险/错误色 */
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06); /* 气泡轻阴影 */
@@ -56,22 +56,49 @@ button {
   min-height: 0; /* 允许内部滚动区域收缩 */
 }
 
-/* 顶栏：浅米色条，放品牌名和消息图标 */
+/* 顶栏：白底 + 细边，偏商业后台 */
 .app-header {
   display: flex; /* 横向排布 */
   align-items: center; /* 垂直居中 */
   gap: 12px; /* 品牌与按钮间距 */
   padding: 10px 16px; /* 内边距 */
-  background: #f7f4ef; /* 浅米色，贴近桌面标题栏观感 */
+  background: #ffffff;
   border-bottom: 1px solid var(--border); /* 底部分隔线 */
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
   flex-shrink: 0; /* 顶栏不被压扁 */
 }
 
-/* 品牌区：小圆点 + 标题 */
+.app-header-badge {
+  margin-inline-end: 0 !important;
+}
+
+.ant-modebar-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ant-composer .ant-composer-input {
+  resize: none;
+}
+
+/* 品牌区：Logo + 标题 */
 .app-header-brand {
-  display: inline-flex; /* 行内横排 */
-  align-items: center; /* 居中 */
-  gap: 8px; /* 圆点与文字间距 */
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nexora-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+  border-radius: 10px;
+}
+
+.nexora-logo--lg {
+  width: 88px;
+  height: 88px;
+  border-radius: 18px;
 }
 
 /* 标题左侧小圆点（模拟 logo） */
@@ -85,8 +112,9 @@ button {
 
 /* 顶栏标题文字 */
 .app-header-title {
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
   color: var(--text);
 }
 
@@ -508,6 +536,11 @@ button {
 }
 
 /* 错误横幅 */
+.error-banner.ant-alert {
+  margin: 0 0 8px;
+  border-radius: 8px;
+}
+
 .error-banner {
   margin: 0 16px 8px; /* 外边距 */
   padding: 8px 12px; /* 内边距 */
@@ -761,13 +794,27 @@ button {
 
 /* ========== 全屏登录页 ========== */
 
-/* 占满窗口：中间卡片区可伸缩，备案条沉底 */
+/* 占满窗口：蓝紫渐变 + 粒子层，中间卡片区可伸缩，备案条沉底 */
 .login-page {
+  position: relative;
   height: 100%;
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f7f4ef;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 18% 8%, #5b7dff 0%, transparent 55%),
+    radial-gradient(90% 70% at 88% 92%, #d7c8ff 0%, transparent 50%),
+    linear-gradient(160deg, #3d66f5 0%, #6d8cff 42%, #b7b6ff 78%, #e4dcff 100%);
+}
+
+.login-particles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .icp-footer-text {
@@ -775,6 +822,8 @@ button {
 }
 
 .login-page-main {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: flex;
   align-items: center;
@@ -784,7 +833,12 @@ button {
 }
 
 .login-page .icp-footer {
+  position: relative;
+  z-index: 1;
   width: 100%;
+  color: rgba(255, 255, 255, 0.82);
+  background: transparent;
+  border-top: none;
 }
 
 /* 居中卡片 */
@@ -795,22 +849,26 @@ button {
   flex-direction: column;
   gap: 8px;
   padding: 28px 24px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  box-shadow: 0 16px 40px rgba(40, 50, 120, 0.22);
+  backdrop-filter: blur(8px);
 }
 
 .login-card-brand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  margin-bottom: 4px;
 }
 
 .login-card-title {
   margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
 }
 
 .login-card-hint {
@@ -830,7 +888,184 @@ button {
   margin-top: 4px;
 }
 
-.login-page-btn {
+.login-actions {
+  display: flex;
+  gap: 8px;
   margin-top: 12px;
+}
+
+.login-actions .login-page-btn {
+  flex: 1;
+  margin-top: 0;
   height: 36px;
+}
+
+.header-download {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  white-space: nowrap;
+  flex: none;
+}
+
+.login-switch {
+  margin-top: 4px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #3d5ccc;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+/* ============================================================================
+   TaskPlanPanel：意图追踪面板（Intent Guard）
+   ============================================================================ */
+.task-panel {
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 0.85rem;
+}
+
+.task-panel-title {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.task-panel-goal-text {
+  margin: 4px 0 0;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.task-panel-history-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.task-panel-history-item {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.task-panel-tasks {
+  margin-top: 8px;
+}
+
+.task-panel-progress {
+  height: 6px;
+  background: var(--assistant-bubble);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.task-panel-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.task-panel-progress-label {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.task-panel-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-item.done .task-item-title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.task-item-title {
+  color: var(--text);
+}
+
+.task-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  background: var(--assistant-bubble);
+  color: var(--muted);
+}
+
+.task-chip.in_progress {
+  background: #fff4e0;
+  color: #9a6700;
+}
+
+.task-chip.done {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.task-chip.blocked {
+  background: #fdeceb;
+  color: var(--danger);
+}
+
+.task-panel-check {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.task-panel-check.drift {
+  background: #fff4e0;
+  color: #9a6700;
+}
+
+.task-panel-correction {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+}
+
+.login-switch {
+  margin-top: 8px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #3d5ccc;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+/* 顶栏「测试工作台」按钮主色；工作台内部样式见 qa-workbench.css */
+.btn-qa-primary {
+  background: #0f766e;
+  color: #fff;
+  border: none;
+}
+
+.btn-qa-primary:hover:not(:disabled) {
+  background: #0d9488;
 }

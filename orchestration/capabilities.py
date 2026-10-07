@@ -31,6 +31,7 @@ class ChatCapability:
             model_name=ctx.model_name,
             active_file=ctx.active_file,
             files=ctx.files,
+            task_events=ctx.task_events,
         )
 
 
@@ -41,9 +42,11 @@ class RagCapability:
         return await app.use_cases.rag.execute(
             ctx.message,
             tenant_id=ctx.tenant_id,
+            session_id=ctx.session_id,
             api_key=ctx.api_key,
             api_base=ctx.api_base,
             model_name=ctx.model_name,
+            task_events=ctx.task_events,
         )
 
 
@@ -58,6 +61,7 @@ class ConsultCapability:
             api_key=ctx.api_key,
             api_base=ctx.api_base,
             model_name=ctx.model_name,
+            task_events=ctx.task_events,
         )
 
 
@@ -68,9 +72,11 @@ class GraphRagCapability:
         return await app.use_cases.graph_rag.execute(
             ctx.message,
             tenant_id=ctx.tenant_id,
+            session_id=ctx.session_id,
             api_key=ctx.api_key,
             api_base=ctx.api_base,
             model_name=ctx.model_name,
+            task_events=ctx.task_events,
         )
 
 
@@ -78,7 +84,7 @@ class AgentCapability:
     name = "agent" #能力必须和前端Mode="agent"对上，编排器用这个名字找处理器
 
     async def run(self, app: AgentApplication, ctx: RequestContext) -> RunResult:
-        # 把HTTP请求里的上下文转发给agentUseCase 
+        # 把HTTP请求里的上下文转发给agentUseCase
         return await app.use_cases.agent.execute(
             ctx.message,                      # 本轮用户原文
             session_id=ctx.session_id,        # ★关键：前端会话 id（已绑租户前缀，如 default__web-xxx）
@@ -92,6 +98,7 @@ class AgentCapability:
             active_file=ctx.active_file,      # Skills / 文件相关
             e2e_base_url=ctx.e2e_base_url,    # E2E 锁定 URL
             qa_tenant_id=ctx.qa_tenant_id,    # QA 租户（若有）
+            task_events=ctx.task_events,      # Intent Guard SSE 事件队列
         )
 
 
@@ -102,10 +109,12 @@ class MultiCapability:
         return await app.use_cases.multi.execute(
             ctx.message,
             tenant_id=ctx.tenant_id,
+            session_id=ctx.session_id,
             multi_mode=ctx.multi_mode,
             api_key=ctx.api_key,
             api_base=ctx.api_base,
             model_name=ctx.model_name,
+            task_events=ctx.task_events,
         )
 
 

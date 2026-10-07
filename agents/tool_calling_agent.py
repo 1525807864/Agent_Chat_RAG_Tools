@@ -35,8 +35,11 @@ class ToolCallingAgent:
         self.trace: list[dict[str, Any]] = []
 
     async def run(self, task: str, context: dict | None = None) -> dict:
-        """返回 ``{"result": str, "trace": list, "usage": dict}``。"""
-        _ = context
+        """返回 ``{"result": str, "trace": list, "usage": dict}``。
+
+        context["intent_guard"]（可选）：意图守卫。drift 的工具调用不执行，
+        用 ToolMessage 回填纠正，保持 bind_tools 协议完整。
+        """
         messages: list = [
             SystemMessage(content=self.system_prompt),
             HumanMessage(content=task),
@@ -48,8 +51,9 @@ class ToolCallingAgent:
             or ""
         )
         usage_acc = empty_turn(model=model_str)
+        guard = (context or {}).get("intent_guard")
 
-        for _ in range(self.max_rounds):
+        for round_no in range(self.max_rounds):
             ai = await self._ainvoke(messages)
             usage_acc = merge_message(usage_acc, ai, model=model_str)
             messages.append(ai)
@@ -79,20 +83,79 @@ class ToolCallingAgent:
                     if isinstance(call, dict)
                     else getattr(call, "id", name or "tool")
                 )
-                tool = self.tools.get(name or "")
-                if tool is None:
-                    output = f"未知工具: {name}"
+
+                blocked = False
+                if guard is not None and name:
+                    check = await guard.check_step(
+                        task=task,
+                        iteration=round_no,
+                        thought=(
+                            ai.content
+                            if isinstance(ai.content, str)
+                            else str(ai.content or "")
+                        ),
+                        action_name=name,
+                        action_input=(args or {}),
+                    )
+                    if check.get("_msg") is not None:
+                        usage_acc = merge_message(usage_acc, check["_msg"], model=model_str)
+                    if check.get("verdict") == "drift":
+                        blocked = True
+                        self.trace.append(
+                            {
+                                "type": "tool",
+                                "name": name,
+                                "args": args,
+                                "blocked_by_intent": True,
+                                "reason": check.get("reason", ""),
+                            }
+                        )
+
+                if blocked:
+                    out_str = (
+                        "[目标对齐拦截] "
+                        + str(
+                            check.get("correction")
+                            or check.get("reason")
+                            or "请回到用户最初的目标继续执行"
+                        )
+                    )
                 else:
-                    output = await self._invoke_tool(tool, args or {})
-                out_str = str(output)
-                self.trace.append(
-                    {
-                        "type": "tool",
-                        "name": name,
-                        "args": args,
-                        "output": out_str[:2000],
-                    }
-                )
+                    if guard is not None and name:
+                        try:
+                            guard.claim_task(action_name=name)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    tool = self.tools.get(name or "")
+                    if tool is None:
+                        out_str = f"未知工具: {name}"
+                        if guard is not None:
+                            try:
+                                guard.complete_active_task(
+                                    ok=False, evidence=out_str
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
+                    else:
+                        out_str = str(await self._invoke_tool(tool, args or {}))
+                        if guard is not None:
+                            try:
+                                ok = bool(out_str.strip()) and not out_str.startswith(
+                                    "未知工具"
+                                )
+                                guard.complete_active_task(
+                                    ok=ok, evidence=out_str[:400]
+                                )
+                            except Exception:  # noqa: BLE001
+                                pass
+                    self.trace.append(
+                        {
+                            "type": "tool",
+                            "name": name,
+                            "args": args,
+                            "output": out_str[:2000],
+                        }
+                    )
                 messages.append(
                     ToolMessage(content=out_str, tool_call_id=str(call_id or name))
                 )

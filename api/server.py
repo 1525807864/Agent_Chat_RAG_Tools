@@ -29,7 +29,7 @@
 
 然后打开 http://127.0.0.1:8020/docs 查看交互式 API 文档。
 """
-
+from api.routes import qa as qa_routes
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -61,6 +61,7 @@ from api.routes import knowledge as knowledge_routes
 from api.routes import auth_debug as auth_debug_routes
 from api.routes import auth_login as auth_login_routes
 from api.routes import billing as billing_routes
+from api.routes import downloads as download_routes
 from config.settings import get_settings
 from safety.http_rate_limit import init_http_rate_limiter, shutdown_http_rate_limiter
 
@@ -87,6 +88,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     try:
         assert_auth_config(settings)
+        try:
+            from observability.langsmith_trace import configure_langsmith
+
+            configure_langsmith(settings)
+        except Exception:  # noqa: BLE001
+            pass
         init_user_store()
         # P0–P2：若 MySQL 可达则幂等建表（本机无库时静默跳过）
         try:
@@ -132,7 +139,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # title/version 会出现在 OpenAPI 文档顶部，便于前后端对齐环境。
 _settings = get_settings()
 app = FastAPI(
-    title="LangChain Demo Agent API",
+    title="LSP Agent API",
     description=(
         "将 application.AgentApplication 暴露为 HTTP 接口："
         "chat / rag / graph-rag / agent / multi，以及会话与知识库管理。"
@@ -185,7 +192,8 @@ app.include_router(chat_routes.router)
 app.include_router(sessions_routes.router)
 app.include_router(knowledge_routes.router)
 app.include_router(billing_routes.router)
-
+app.include_router(download_routes.router)
+app.include_router(qa_routes.router)
 
 @app.get("/health/live", response_model=LiveHealthResponse, tags=["system"])
 @app.get("/health", response_model=HealthResponse, tags=["system"])

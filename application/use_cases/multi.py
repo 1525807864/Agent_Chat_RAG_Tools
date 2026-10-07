@@ -24,20 +24,24 @@ class MultiAgentUseCase:
         message: str,
         *,
         tenant_id: str = "default",
+        session_id: str = "default",
         multi_mode: str = "sequential",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         model_name: Optional[str] = None,
         use_tool_calling: bool = True,
+        task_events=None,
     ) -> RunResult:
         result = await self._run(
             message,
             mode=multi_mode,
             tenant_id=tenant_id,
+            session_id=session_id,
             api_key=api_key,
             api_base=api_base,
             model_name=model_name,
             use_tool_calling=use_tool_calling,
+            task_events=task_events,
         )
         usage_meta = result.pop("usage_meta", {}) or {}
         return RunResult(
@@ -58,10 +62,12 @@ class MultiAgentUseCase:
         mode: str = "sequential",
         *,
         tenant_id: str = "default",
+        session_id: str = "default",
         api_key: str | None = None,
         api_base: str | None = None,
         model_name: str | None = None,
         use_tool_calling: bool = True,
+        task_events=None,
     ) -> dict:
         from agents.orchestrator import MultiAgentOrchestrator
         from agents.react_agent import RESEARCHER_SYSTEM_PROMPT, ReActAgent
@@ -165,12 +171,40 @@ class MultiAgentUseCase:
 
         from agents.graphs.multi_agent_graph import run_multi_agent_graph
 
+        # ---------- 意图守卫：图内每个 Agent 的每步决策都会做对齐检查 ----------
+        guard = None
+        if app.memory is None:
+            await app.init_session_store()
+        guard = app.intent_guard_for(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            api_key=api_key,
+            api_base=api_base,
+            model_name=model_name,
+            event_sink=task_events,
+        )
+        if guard is not None:
+            try:
+                await guard.ensure_anchor(user_input=task)
+            except Exception as e:  # noqa: BLE001
+                app.logger.warning("意图守卫锚点建立失败: %s", e)
+                guard = None
+
         result = await run_multi_agent_graph(
             orch.agents,
             task,
             mode=mode,
             debate_rounds=2,
+            context={"intent_guard": guard} if guard is not None else None,
         )
+
+        # 回合收尾：完成度校验 + 按需追加未完成清单
+        intent_meta: dict = {}
+        if guard is not None:
+            final_answer, intent_meta = await guard.close_turn(
+                user_input=task, answer=str(result.final_answer or "")
+            )
+            result.final_answer = final_answer
 
         # 合并各 agent 返回的 usage（图里能带到的部分）
         acc = empty_turn(model=model)
@@ -207,5 +241,5 @@ class MultiAgentUseCase:
             "agent_outputs": outputs,
             "total_time_ms": result.total_time_ms,
             "success": result.success,
-            "usage_meta": usage_meta,
+            "usage_meta": {**usage_meta, **intent_meta},
         }

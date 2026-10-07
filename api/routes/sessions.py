@@ -6,11 +6,13 @@ from api.auth.deps import AuthUser, get_current_user
 from api.auth.session_scope import bind_session_id, public_session_id
 from api.deps import get_agent_app
 from api.schemas import (
+    IntentTaskDTO,
     SessionHistoryResponse,
     SessionListResponse,
     SessionMemoryResponse,
     SessionMessage,
     SolipNextQuestion,
+    TaskPlanDTO,
 )
 from application.services.agent_application import AgentApplication
 
@@ -61,12 +63,40 @@ async def get_session_memory(
         elif isinstance(q, str) and q.strip():
             next_qs.append(SolipNextQuestion(question=q.strip()))
 
+    tp = snap.get("task_plan") or {}
+    plan_tasks: list[IntentTaskDTO] = []
+    for t in tp.get("tasks") or []:
+        if isinstance(t, dict) and t.get("title"):
+            plan_tasks.append(
+                IntentTaskDTO(
+                    id=str(t.get("id") or ""),
+                    title=str(t.get("title") or ""),
+                    status=str(t.get("status") or "pending"),
+                    closed_by=str(t.get("closed_by") or ""),
+                    closed_at=str(t.get("closed_at") or ""),
+                    sort=int(t.get("sort") or 0),
+                )
+            )
+    task_plan = TaskPlanDTO(
+        goal=str(tp.get("goal") or ""),
+        goal_raw=str(tp.get("goal_raw") or ""),
+        turn_created=int(tp.get("turn_created") or 1),
+        last_confirmed_turn=int(tp.get("last_confirmed_turn") or 0),
+        anchor_history=list(tp.get("anchor_history") or []),
+        tasks=plan_tasks,
+        version=int(tp.get("version") or 0),
+        check_errors=int(tp.get("check_errors") or 0),
+        drift_count=int(tp.get("drift_count") or 0),
+        blocked_actions=int(tp.get("blocked_actions") or 0),
+    )
+
     return SessionMemoryResponse(
         session_id=session_id,
         intent_hypothesis=str(snap.get("intent_hypothesis") or ""),
         open_loops=[str(x) for x in (snap.get("open_loops") or [])],
         next_questions=next_qs,
         summary=str(snap.get("summary") or ""),
+        task_plan=task_plan,
     )
 
 

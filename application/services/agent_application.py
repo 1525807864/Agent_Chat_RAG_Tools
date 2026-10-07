@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agents.tools_registry import create_default_registry
 from application.llm_factory import resolve_request_llm
 from application.memory_bootstrap import bootstrap_session_memory
@@ -116,6 +118,44 @@ class AgentApplication(AskCompatMixin):
             model_name=model_name,
             temperature=temperature,
         )
+
+    def intent_guard_for(
+        self,
+        *,
+        session_id: str,
+        tenant_id: str,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        model_name: str | None = None,
+        event_sink: Any = None,
+    ):
+        """构造 IntentGuardService；关闭 / 失败时返回 None（fail-open）。"""
+        if not self.settings.intent_guard_enabled:
+            return None
+        try:
+            from intent.service import IntentGuardService
+
+            check_llm = self._resolve_llm(
+                api_key=api_key,
+                api_base=api_base,
+                model_name=(
+                    (self.settings.intent_check_model_name or "").strip()
+                    or model_name
+                ),
+                temperature=0.0,
+            )
+            return IntentGuardService(
+                settings=self.settings,
+                llm=check_llm,
+                memory=self.memory,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                event_sink=event_sink,
+                logger=self.logger,
+            )
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning("意图守卫初始化失败: %s", e)
+            return None
 
     async def _ensure_skills(self):
         return await self.skills.ensure()

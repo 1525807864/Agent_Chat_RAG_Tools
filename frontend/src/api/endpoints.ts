@@ -5,6 +5,7 @@
 // 导入底层 JSON 客户端与 Base 读取
 import { apiJson, getApiBase, handleUnauthorized } from "./client";
 import { authHeaders } from "../auth/token";
+
 // 导入请求/响应类型（仅类型，编译后擦除）
 import type {
   BuildKBRequest, // 建库请求
@@ -17,11 +18,18 @@ import type {
   ReadyHealthResponse, // 就绪检查
   SessionHistoryResponse, // 会话历史
   SessionListResponse, // 会话列表
+  SessionMemoryResponse, // 会话记忆快照（含意图台账）
   UploadDocResponse, // 上传文档响应
   KbJobResponse, // 建库任务状态
   TurnUsage, // 本轮token用量
   TenantUsageDTO, // 租户用量
+  TaskPlan, // 意图台账
+  TaskEventPayload, // SSE task 帧
+  QaProject, // 测试工作台：被测项目
+  QaCase, // 测试工作台：用例
+  QaRun, // 测试工作台：运行
 } from "../types/api";
+import type { QaMember } from "../types/qa";
 
 // GET /health：liveness 探活
 export function fetchHealth() {
@@ -77,6 +85,13 @@ export function getSessionHistory(sessionId: string) {
   // encodeURIComponent 防止特殊字符破坏 URL
   return apiJson<SessionHistoryResponse>(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+// GET /api/sessions/{id}/memory：摘要 + Solip + 意图台账快照
+export function getSessionMemory(sessionId: string) {
+  return apiJson<SessionMemoryResponse>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/memory`,
   );
 }
 
@@ -171,7 +186,9 @@ export async function postChatStream(
     onDone?: (answer: string,meta?:{
       usage?: TurnUsage;
       tenant_usage?: TenantUsageDTO;
+      task_plan?: TaskPlan;
     }) => void; // done 定稿
+    onTask?: (payload: TaskEventPayload) => void; // task：意图追踪帧
     onError?: (detail: string) => void; // error 或 HTTP 失败
   },
   signal?: AbortSignal, // 可选：停止按钮 abort
@@ -248,7 +265,14 @@ export async function postChatStream(
       handlers.onDone?.(answer,{
         usage: (payload as any).usage,
         tenant_usage: (payload as any).tenant_usage,
+        task_plan: (payload as any).task_plan,
       });
+    } else if (eventName === "task") {
+      // Intent Guard 意图追踪帧：anchor / check / plan_update / finalize
+      const t = payload as TaskEventPayload;
+      if (t && typeof t.type === "string") {
+        handlers.onTask?.(t);
+      }
     } else if (eventName === "error") {
       // 业务错误帧
       const d = payload as { detail?: unknown };
@@ -322,4 +346,135 @@ export function fetchTenantUsage() {
   return apiJson<{ tenant_id?: string; usage: TenantUsageDTO }>(
     "/api/billing/usage",
   );
+}
+
+/** 安装包是否可下载。available 为 false 时 detail 是给人看的原因。 */
+export interface DesktopDownloadMeta {
+  available: boolean;
+  filename: string;
+  size_bytes: number;
+  platform: string;
+  detail: string;
+}
+
+/** GET /api/downloads/desktop/meta */
+export function fetchDesktopDownloadMeta() {
+  return apiJson<DesktopDownloadMeta>("/api/downloads/desktop/meta");
+}
+
+/** 浏览器直接打开这个地址即可下载，文件名由响应头 Content-Disposition 决定。 */
+export function desktopDownloadUrl(): string {
+  return `${getApiBase()}/api/downloads/desktop`;
+}
+
+/** POST /api/auth/register。用户名 3–32，密码至少 8 位，与后端 RegisterRequest 一致。 */
+export function postRegister(body: LoginRequest) {
+  return apiJson<LoginResponse>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchQaProjects() {
+  return apiJson<{items:QaProject[]}>("/api/qa/projects");
+}
+
+export function createQaProject(body: {name:string;base_url:string;goal:string}) {
+  return apiJson<QaProject>("/api/qa/projects",{
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patchQaProject(
+  projectId: string,
+  body: { base_url?: string;goal?:string}
+){
+  return apiJson<QaProject>(`/api/qa/projects/${projectId}`,{
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchQaCases(projectId: string) {
+  return apiJson<{items:QaCase[]}>(`/api/qa/projects/${projectId}/cases`);
+}
+
+export function generateQaCases(projectId: string, goal?: string) {
+  return apiJson<{ items: QaCase[] }>(
+    `/api/qa/projects/${projectId}/generate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ goal: goal || null }),
+    },
+  );
+}
+/** POST confirm */
+export function confirmQaCase(projectId: string, caseId: string, fused?: string) {
+  return apiJson<QaCase>(
+    `/api/qa/projects/${projectId}/cases/${caseId}/confirm`,
+    { method: "POST", body: JSON.stringify({ fused: fused ?? null }) },
+  );
+}
+/** GET runs */
+export function fetchQaRuns(projectId: string) {
+  return apiJson<{ items: QaRun[] }>(`/api/qa/projects/${projectId}/runs`);
+}
+/** POST 冒烟 */
+export function runQaSmoke(projectId: string, case_ids?: string[]) {
+  return apiJson<QaRun>(`/api/qa/projects/${projectId}/runs`, {
+    method: "POST",
+    body: JSON.stringify({ case_ids: case_ids ?? null }),
+  });
+}
+
+/** DELETE 项目 */
+export function deleteQaProject(projectId: string) {
+  return apiJson<{ ok: boolean }>(`/api/qa/projects/${projectId}`, {
+    method: "DELETE",
+  });
+}
+
+/** DELETE 用例（含子节点） */
+export function deleteQaCase(projectId: string, caseId: string) {
+  return apiJson<{ items: QaCase[] }>(
+    `/api/qa/projects/${projectId}/cases/${caseId}`,
+    { method: "DELETE" },
+  );
+}
+
+/** GET 成员 */
+export function fetchQaMembers() {
+  return apiJson<{ items: QaMember[] }>("/api/qa/members");
+}
+
+/** POST 成员 */
+export function addQaMember(body: { name: string; role: string }) {
+  return apiJson<{ items: QaMember[] }>("/api/qa/members", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** PATCH 成员角色 */
+export function patchQaMember(memberId: string, role: string) {
+  return apiJson<{ items: QaMember[] }>(
+    `/api/qa/members/${memberId}`,
+    { method: "PATCH", body: JSON.stringify({ role }) },
+  );
+}
+
+/** POST 测试助手 */
+export function postQaAssistant(
+  projectId: string,
+  body: { text: string; case_id?: string | null },
+) {
+  return apiJson<{
+    reply: string;
+    selectedId: string | null;
+    cases: QaCase[];
+  }>(`/api/qa/projects/${projectId}/assistant`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

@@ -24,6 +24,8 @@ class RequestContext:
     qa_tenant_id: Optional[str] = None
     files: list | None = None
     active_file: Optional[str] = None
+    # Intent Guard 的 SSE 事件队列（编排层创建并 drain；非流式路径为 None）
+    task_events: Optional[Any] = None
 
 
 @dataclass
@@ -42,9 +44,15 @@ class RunResult:
 
 @dataclass(frozen=True)
 class StreamEvent:
-    """流式编排事件：API 只认 kind/text/answer/meta，不接触 LLM 类型。"""
+    """流式编排事件：API 只认 kind/text/answer/meta，不接触 LLM 类型。
 
-    kind: str  # "delta" | "final"
+    kind:
+    - "delta"：答案增量
+    - "final"：完整答案 + usage meta
+    - "task"：意图追踪帧（meta = {"type": anchor|check|plan_update|finalize, "data": ...}）
+    """
+
+    kind: str  # "delta" | "final" | "task"
     text: str = ""
     answer: str = ""
     meta: dict[str, Any] = field(default_factory=dict)

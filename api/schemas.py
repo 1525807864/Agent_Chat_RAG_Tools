@@ -154,14 +154,41 @@ class SolipNextQuestion(BaseModel):
     reason: str = ""
 
 
+class IntentTaskDTO(BaseModel):
+    """意图任务清单条目（Intent Guard）。"""
+
+    id: str
+    title: str
+    status: str = "pending"  # pending|in_progress|done|blocked|skipped
+    closed_by: str = ""
+    closed_at: str = ""
+    sort: int = 0
+
+
+class TaskPlanDTO(BaseModel):
+    """意图台账快照（memory 端点返回，前端任务面板数据源）。"""
+
+    goal: str = ""
+    goal_raw: str = ""
+    turn_created: int = 1
+    last_confirmed_turn: int = 0
+    anchor_history: List[dict[str, Any]] = Field(default_factory=list)
+    tasks: List[IntentTaskDTO] = Field(default_factory=list)
+    version: int = 0
+    check_errors: int = 0
+    drift_count: int = 0
+    blocked_actions: int = 0
+
+
 class SessionMemoryResponse(BaseModel):
-    """``GET /api/sessions/{session_id}/memory``：摘要 + Solip 快照。"""
+    """``GET /api/sessions/{session_id}/memory``：摘要 + Solip 快照 + 意图台账。"""
 
     session_id: str
     intent_hypothesis: str = ""
     open_loops: List[str] = Field(default_factory=list)
     next_questions: List[SolipNextQuestion] = Field(default_factory=list)
     summary: str = ""
+    task_plan: TaskPlanDTO = Field(default_factory=TaskPlanDTO)
 
 
 class BuildKBRequest(BaseModel):

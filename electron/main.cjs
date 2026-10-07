@@ -772,7 +772,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 640,
-    title: "LangChain Demo Agent",
+    title: "Nexora",
     icon: APP_ICON_PATH,
     webPreferences: {
       nodeIntegration: false,

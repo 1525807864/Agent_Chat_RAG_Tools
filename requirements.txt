@@ -6,7 +6,7 @@ langchain-openai>=0.2.0
 langchain-chroma>=0.1.0
 langgraph>=0.2.0
 openai>=1.50.0
-
+langsmith>=0.1.0
 # ===== 向量数据库 & RAG =====
 chromadb>=0.5.0
 faiss-cpu>=1.9.0

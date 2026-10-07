@@ -37,6 +37,7 @@ class _PreparedTurn:
     system_extra: str
     memory_session_id: str
     persist_user: str
+    tenant_id: str = "default"
 
 
 class ChatUseCase:
@@ -56,6 +57,7 @@ class ChatUseCase:
         model_name: Optional[str] = None,
         active_file: Optional[str] = None,
         files: list | None = None,
+        task_events=None,
     ) -> RunResult:
         answer, usage_meta = await self._run(
             message,
@@ -66,6 +68,7 @@ class ChatUseCase:
             model_name=model_name,
             active_file=active_file,
             files=files,
+            task_events=task_events,
         )
         return RunResult(
             answer=answer,
@@ -83,6 +86,7 @@ class ChatUseCase:
         model_name: Optional[str] = None,
         active_file: Optional[str] = None,
         files: list | None = None,
+        task_events=None,
     ) -> AsyncIterator[StreamEvent]:
         """真流式：与 execute 同路径（Skills + Memory），yield delta，末条 final+usage。"""
         app = self._app
@@ -96,6 +100,7 @@ class ChatUseCase:
             prep = await self._prepare(
                 message,
                 session_id=session_id,
+                tenant_id=tenant_id,
                 api_key=api_key,
                 api_base=api_base,
                 model_name=model_name,
@@ -120,6 +125,27 @@ class ChatUseCase:
         )
         messages = prompt_value.to_messages()
         model_name_str = str(getattr(prep.llm, "model_name", "") or "")
+
+        guard = self._make_guard(prep, tenant_id, task_events)
+        if guard is not None:
+            try:
+                plan = await guard.ensure_anchor(user_input=prep.persist_user)
+                if plan is not None:
+                    yield StreamEvent(
+                        kind="task",
+                        meta={
+                            "type": "anchor",
+                            "data": {
+                                "goal": plan.goal,
+                                "turn_created": plan.turn_created,
+                                "version": plan.version,
+                            },
+                        },
+                    )
+                await guard.pre_turn_check(user_input=prep.persist_user)
+            except Exception as e:  # noqa: BLE001
+                app.logger.warning("意图守卫回合前检查失败: %s", e)
+
         parts: list[str] = []
         turn = TurnUsage(model=model_name_str)
         try:
@@ -153,8 +179,21 @@ class ChatUseCase:
         if not out_ok:
             result = f"[安全拦截] {out_reason}"
 
+        intent_meta: dict = {}
+        if guard is not None:
+            result, intent_meta = await guard.close_turn(
+                user_input=prep.persist_user, answer=result
+            )
+            yield StreamEvent(
+                kind="task",
+                meta={
+                    "type": "finalize",
+                    "data": {"plan": intent_meta.get("task_plan") or {}},
+                },
+            )
+
         await self._persist(prep, result)
-        usage_meta = self._record(tenant_id, turn)
+        usage_meta = {**self._record(tenant_id, turn), **intent_meta}
         yield StreamEvent(kind="final", answer=result, meta=usage_meta)
 
     async def astream_simple(self, message: str, **kwargs):
@@ -173,6 +212,7 @@ class ChatUseCase:
         model_name: str | None = None,
         active_file: str | None = None,
         files: list | None = None,
+        task_events=None,
     ) -> tuple[str, dict]:
         app = self._app
         blocked = await app.security.guard(user_input, rate_limit=False)
@@ -183,6 +223,7 @@ class ChatUseCase:
             prep = await self._prepare(
                 user_input,
                 session_id=session_id,
+                tenant_id=tenant_id,
                 api_key=api_key,
                 api_base=api_base,
                 model_name=model_name,
@@ -194,6 +235,14 @@ class ChatUseCase:
         except Exception as e:  # noqa: BLE001
             app.logger.error("对话失败: %s", e)
             return f"对话出错: {sanitize_exception_message(e)}", {}
+
+        guard = self._make_guard(prep, tenant_id, task_events)
+        if guard is not None:
+            try:
+                await guard.ensure_anchor(user_input=prep.persist_user)
+                await guard.pre_turn_check(user_input=prep.persist_user)
+            except Exception as e:  # noqa: BLE001
+                app.logger.warning("意图守卫回合前检查失败: %s", e)
 
         try:
             prompt_value = self._prompt().invoke(
@@ -216,10 +265,16 @@ class ChatUseCase:
             if not out_ok:
                 return f"[安全拦截] {out_reason}", {}
 
+            intent_meta: dict = {}
+            if guard is not None:
+                result, intent_meta = await guard.close_turn(
+                    user_input=prep.persist_user, answer=result
+                )
+
             await self._persist(prep, result)
             model_name_str = str(getattr(prep.llm, "model_name", "") or "")
             turn = usage_from_message(ai_msg, model=model_name_str)
-            return result, self._record(tenant_id, turn)
+            return result, {**self._record(tenant_id, turn), **intent_meta}
         except Exception as e:
             app.logger.error("对话失败: %s", e)
             return f"对话出错: {sanitize_exception_message(e)}", {}
@@ -241,6 +296,7 @@ class ChatUseCase:
         user_input: str,
         *,
         session_id: str,
+        tenant_id: str = "default",
         api_key: str | None,
         api_base: str | None,
         model_name: str | None,
@@ -301,7 +357,9 @@ class ChatUseCase:
         history: list = []
         if app.memory is not None:
             turn = await app.memory.load_turn_context(
-                memory_session_id, effective_input
+                memory_session_id,
+                effective_input,
+                tenant_id=tenant_id,
             )
             summary_block = turn.system_extra()
             for msg in turn.recent_messages:
@@ -309,6 +367,13 @@ class ChatUseCase:
                     history.append(HumanMessage(content=msg.get("content") or ""))
                 elif msg["role"] == "assistant":
                     history.append(AIMessage(content=msg.get("content") or ""))
+            app.logger.info(
+                "chat.memory.load session=%s tenant=%s hist=%s rewrite=%s",
+                memory_session_id,
+                tenant_id,
+                len(history),
+                (turn.rewrite_meta or {}).get("reason"),
+            )
 
         return _PreparedTurn(
             llm=llm,
@@ -317,6 +382,18 @@ class ChatUseCase:
             system_extra=(summary_block or "") + (skill_extra or ""),
             memory_session_id=memory_session_id,
             persist_user=user_input,
+            tenant_id=tenant_id,
+        )
+
+    def _make_guard(self, prep: _PreparedTurn, tenant_id: str, task_events=None):
+        """构造意图守卫（关闭 / 失败返回 None）。"""
+        return self._app.intent_guard_for(
+            session_id=prep.memory_session_id,
+            tenant_id=tenant_id,
+            api_key=None,
+            api_base=None,
+            model_name=str(getattr(prep.llm, "model_name", "") or "") or None,
+            event_sink=task_events,
         )
 
     async def _persist(self, prep: _PreparedTurn, result: str) -> None:
@@ -335,6 +412,7 @@ class ChatUseCase:
                         session_id=prep.memory_session_id,
                         user_input=prep.persist_user,
                         assistant_output=result,
+                        tenant_id=prep.tenant_id,
                     )
                 except Exception as exc:  # noqa: BLE001
                     app.logger.warning("后台 Solip/Compact 失败: %s", exc)

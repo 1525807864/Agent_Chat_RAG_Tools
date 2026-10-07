@@ -14,13 +14,16 @@ async def _call(agent:Any,prompt:str,context: dict|None = None)->dict[str,Any]:
 def _text(raw:dict[str,Any])->str:
     return str(raw.get("result") or "")
 
-def build_multi_agent_graph(agents:dict[str,Any]):
-    """构建多Agent协作图，支持sequential/debate/router三种模式"""
+def build_multi_agent_graph(agents:dict[str,Any], context: dict | None = None):
+    """构建多Agent协作图，支持sequential/debate/router三种模式。
+
+    context 透传给图内每个 Agent.run()（如 {"intent_guard": guard}）。
+    """
     researcher = agents["researcher"]
     coder = agents["coder"]
     reviewer = agents["reviewer"]
     async def researcher_node(state:MultiAgentState)->dict:
-        raw = await _call(researcher, state["task"])
+        raw = await _call(researcher, state["task"], context)
         return {
             "current":_text(raw),
             "last_agent":"researcher",
@@ -36,7 +39,7 @@ def build_multi_agent_graph(agents:dict[str,Any]):
             f"{prev}\n\n"
             f"请基于以上结果继续处理，不要声称无法联网。"
         )
-        raw = await _call(coder,prompt)
+        raw = await _call(coder,prompt,context)
         return {
             "current":_text(raw),
             "last_agent":"coder",
@@ -45,14 +48,14 @@ def build_multi_agent_graph(agents:dict[str,Any]):
         }
     async def reviewer_node(state:MultiAgentState)->dict:
         task = state["task"]
-        prev = state.get("current") or "" 
+        prev = state.get("current") or ""
         prompt = (
             f"用户原任务: {task}\n\n"
             f"上一 Agent 的结果（可能含 web_search 内容，请采信其中的链接与摘要）:\n"
             f"{prev}\n\n"
             f"请基于以上结果继续处理，不要声称无法联网。"
         )
-        raw = await _call(reviewer,prompt)
+        raw = await _call(reviewer,prompt,context)
         final = _text(raw).strip() or prev
         return {
             "current": final,
@@ -70,12 +73,12 @@ def build_multi_agent_graph(agents:dict[str,Any]):
             f"用户任务:{state['task']}\n\n可用Agent列表:\n{names}\n\n"
             f"请只回复最适合处理此任务的Agent名称(只回复一个名称):"
         )
-        raw = await _call(researcher,prompt)
+        raw = await _call(researcher,prompt,context)
         selected = _text(raw).strip()
         for name in agents:
             if name.lower() in selected.lower():
                 selected = name
-                break 
+                break
         if selected not in agents:
             selected = "coder"
         return {
@@ -86,7 +89,7 @@ def build_multi_agent_graph(agents:dict[str,Any]):
     async def route_run(state:MultiAgentState)->dict:
         name = state.get("selected") or "coder"
         agent = agents[name]
-        raw = await _call(agent,state["task"])
+        raw = await _call(agent,state["task"],context)
         return {
             "current":_text(raw),
             "last_agent":name,
@@ -105,7 +108,7 @@ def build_multi_agent_graph(agents:dict[str,Any]):
             f"之前的观点:\n{context_text}\n\n"
             f"请发表你的观点 (可以赞同、反对或补充):"
         )
-        raw = await _call(agent,prompt)
+        raw = await _call(agent,prompt,context)
         opinion = _text(raw)
         round_no = r//3 + 1
         key = f"{name}_round{round_no}"
@@ -128,7 +131,7 @@ def build_multi_agent_graph(agents:dict[str,Any]):
             f"原始话题: {state['task']}\n\n所有观点:\n{opinions}\n\n"
             f"请总结以上辩论, 给出最终结论和建议:"
         )
-        raw = await _call(researcher,prompt)
+        raw = await _call(researcher,prompt,context)
         return {
             "current": _text(raw),
             "last_agent": "researcher",
@@ -174,9 +177,10 @@ async def run_multi_agent_graph(
     task: str,
     mode: str = "sequential",
     debate_rounds: int = 2,
+    context: dict | None = None,
 ) -> OrchestratorResult:
     start = time.time()
-    graph = build_multi_agent_graph(agents)
+    graph = build_multi_agent_graph(agents, context=context)
     if mode not in ("sequential", "router", "debate"):
         mode = "router"
     try:

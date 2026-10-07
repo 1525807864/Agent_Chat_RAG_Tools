@@ -48,6 +48,7 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/release/
+downloads/*.exe
 frontend/.vite/
 
 # --- runtime data (local DBs, vectors, logs, session memory) ---
