@@ -1,12 +1,28 @@
-# LangChain Demo Agent
+# Nexora（LangChain Demo Agent）
 
-基于 LangChain / LangGraph 的多模式 AI Agent 演示项目：普通对话、混合检索 RAG、结构化咨询、GraphRAG、ReAct 单 Agent（含 MCP）、多智能体协作；提供 FastAPI、Vite/React 前端，以及可选 Electron 桌面端。
+基于 LangChain / LangGraph 的多模式 AI Agent 平台：普通对话、混合检索 RAG、结构化咨询、GraphRAG、ReAct 单 Agent（含 MCP）、多智能体协作；提供 FastAPI、Vite/React 前端（AgentHub 风格领域门户）、自动测试工作台，以及可选 Electron 桌面端。
 
-默认 LLM 兼容 DeepSeek / OpenAI 协议；可选 Cursor Agent SDK 处理改代码类请求。
+默认 LLM 兼容 DeepSeek / OpenAI / 智谱等协议；可选 Cursor Agent SDK 处理改代码类请求。时间统一按 **Asia/Shanghai（北京时间）** 写入与展示。
+
+---
+
+## 产品入口
+
+登录后默认进入 **工作台门户**（hash `#/`）：
+
+| 领域 | 状态 | 说明 |
+|------|------|------|
+| 对话平台 | 已上线 | `#/chat`，多模型 / RAG / Agent |
+| 自动测试平台 | 已上线 | `#/qa`，用例 / 执行 / 报告 / UI Agent |
+| 代码评审、运维、数据、知识库独立台等 | 占位 | 卡片「即将开放」，后续按垂直 Agent 接入 |
+
+顶栏可「工作台首页」返回门户；对话与测试台视觉统一为 **墨色 + 香槟金** 风格。
 
 ---
 
 ## 功能概览
+
+### 对话模式
 
 | 模式 | 说明 |
 |------|------|
@@ -17,50 +33,65 @@
 | `agent` | ReAct 工具环；工作区读写；通用 MCP；可选主动工具发现；E2E Playwright |
 | `multi` | sequential / debate / router 多智能体 |
 
-其它能力：JWT 登录与租户、知识库建库、计费账本、HTTP 限流与内容过滤、生产 Docker Compose 部署。
+### 平台能力
+
+- **JWT 登录与租户**、知识库上传/建库、计费账本、HTTP 限流与内容过滤  
+- **自动测试工作台**：项目、用例、运行、报告导出、成员权限、项目知识库；UI Agent（Playwright）执行  
+- **平台沙箱**（可选 Docker）：统一执行面（shell / pwsh / 工作区 fs），策略、出网白名单、空闲回收；高危命令前端审批  
+- 生产 Docker Compose 部署  
 
 ---
 
 ## 架构（SOLID 分层）
 
 ```text
-前端 / Electron / CLI
+前端门户 / 对话三栏 / 测试工作台 / Electron
         │
         ▼
-api/（FastAPI，薄适配：鉴权、SSE、参数校验）
+api/（FastAPI：鉴权、SSE、QA、sandbox、参数校验）
         │
         ▼
 orchestration/（ChatOrchestrator：Cursor 路由 → mode Capability）
         │
         ▼
-application/use_cases/（Chat / Rag / Agent / …）
+application/（use_cases、qa、sandbox、MCP、Tools、Skills）
         │
         ▼
 domain/（RequestContext、RunResult、Ports）
         │
         ▼
-infrastructure / rag / agents / memory / MCP 适配
+infrastructure/（rag、agents、memory、sandbox、qa filesystem、MCP）
 ```
 
 核心门面：`application/services/agent_application.py`（依赖组装 + 兼容旧 `ask_*`）。  
-HTTP 对话统一走 `app.orchestrator.handle` / `stream`，不再在路由里堆 mode 分支。
+HTTP 对话统一走 `app.orchestrator.handle` / `stream`。  
+北京时间工具：`shared/timeutil.py`、前端 `frontend/src/utils/beijingTime.ts`。
 
 ---
 
 ## 目录结构（节选）
 
 ```text
-api/                 FastAPI 路由、鉴权、schemas
-application/         用例、编排依赖、MCP、Tools 网关、Skills 运行时
-orchestration/       ChatOrchestrator + Capability
-domain/              领域模型与 Port
-agents/              ReAct / ToolCalling / 多 Agent 图
-rag/                 向量、BM25、混合检索、图谱、结构化咨询
-memory/              会话存储与 MemoryFacade
-frontend/            Vite + React
-electron/            桌面壳
-deploy/              Nginx、systemd、更新脚本
-tests/               pytest（编排、分层闸、用例 mock 等）
+api/                   FastAPI 路由（chat / sessions / knowledge / qa / sandbox）
+application/           用例、qa（含 ui_agent / report_export）、sandbox 服务
+orchestration/         ChatOrchestrator + Capability
+domain/                领域模型与 Port
+agents/                ReAct / ToolCalling / 多 Agent 图
+rag/                   向量、BM25、混合检索、图谱、结构化咨询
+memory/                会话存储与 MemoryFacade
+infrastructure/
+  sandbox/             Docker 运行时、策略、审批风险、reaper
+  qa/                  测试平台文件系统
+frontend/src/
+  portal/              领域门户配置 domains.ts
+  components/HomePortal.tsx
+  components/qa/       测试工作台页面
+  components/sandbox/  高危命令审批面板
+  styles/portal.css    门户 / 全局墨金主题令牌见 index.css
+docker/sandbox/        沙箱镜像 Dockerfile
+shared/timeutil.py     北京时间
+deploy/                Nginx、systemd、更新脚本
+tests/                 pytest
 ```
 
 更细的云部署说明见 [deploy/README.md](deploy/README.md)。
@@ -72,7 +103,8 @@ tests/               pytest（编排、分层闸、用例 mock 等）
 - Python 3.11+（推荐 3.12/3.13）
 - Node.js 18+（前端 / Electron）
 - 可选：Redis、MySQL 8（生产 Compose 自带）
-- 可选：npx（Playwright MCP / E2E）
+- 可选：Docker（平台沙箱 `SANDBOX_ENABLED=true`）
+- 可选：npx（Playwright MCP / E2E / QA UI Agent）
 
 ---
 
@@ -113,13 +145,30 @@ EMBEDDING_API_KEY=...
 EMBEDDING_MODEL=embedding-3
 ```
 
-启动 API（常用本机端口 **8020**，与 Electron 默认一致；文档示例也可用 8000）：
+平台沙箱（可选，需本机 Docker 与镜像）：
+
+```env
+SANDBOX_ENABLED=true
+SANDBOX_RUNTIME=docker
+SANDBOX_IMAGE=nexora-sandbox:latest
+SANDBOX_MODE=workspace-write
+SANDBOX_NETWORK_MODE=deny
+SANDBOX_APPROVAL=on-risky
+```
+
+构建沙箱镜像示例：
+
+```bash
+docker build -t nexora-sandbox:latest -f docker/sandbox/Dockerfile docker/sandbox
+```
+
+启动 API（常用本机端口 **8020**，与 Electron 默认一致）：
 
 ```bash
 python -m uvicorn api.server:app --reload --host 127.0.0.1 --port 8020
 ```
 
-健康检查：`http://127.0.0.1:8020/health`  
+健康检查：`http://127.0.0.1:8020/health`、`/health/ready`  
 OpenAPI（非生产且开启时）：`http://127.0.0.1:8020/docs`
 
 ### 2. 前端
@@ -132,7 +181,8 @@ npm install
 npm run dev
 ```
 
-浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。
+浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。  
+登录后进入门户；对话 `#/chat`，测试工作台 `#/qa`。
 
 ### 3. Electron 桌面（可选）
 
@@ -165,6 +215,14 @@ curl -s http://127.0.0.1:8020/api/chat ^
 
 支持的 `mode`：`chat` | `rag` | `consult` | `graph-rag` | `agent` | `multi`。
 
+其它主要前缀：
+
+| 前缀 | 说明 |
+|------|------|
+| `/api/qa/*` | 测试工作台项目 / 用例 / 运行 / 报告 |
+| `/api/sandbox/*` | 沙箱会话与执行（需启用配置） |
+| `/api/knowledge/*` | 知识库文档与建库 |
+
 ---
 
 ## 配置要点
@@ -179,18 +237,23 @@ curl -s http://127.0.0.1:8020/api/chat ^
 | `ACTIVE_TOOL_DISCOVERY` | Agent 主动发现工具（工具多时再开） |
 | `HYBRID_*` | 混合检索与路由器 |
 | `TAVILY_API_KEY` | `web_search` 工具 |
+| `SANDBOX_ENABLED` 等 | 平台沙箱（见 `.env.example`） |
 
 完整模板：`.env.example`、生产：`.env.production.example`。
+
+前端模型设置保存在本机浏览器；Key 留空时后端用服务端 `.env` 兜底。切换厂商时请同时改 **API Key + API Base + Model Name**。
 
 ---
 
 ## 测试
 
 ```bash
-python -m pytest tests/test_orchestration_smoke.py tests/test_orchestrator_matrix.py tests/test_orchestrator_stream.py tests/test_layering.py tests/test_use_cases_unit.py tests/test_tool_gateway.py tests/test_routing_policy.py tests/test_facade_helpers.py tests/test_chat_astream.py -q
+python -m pytest tests/test_orchestration_smoke.py tests/test_orchestrator_matrix.py tests/test_orchestrator_stream.py tests/test_layering.py tests/test_use_cases_unit.py tests/test_tool_gateway.py tests/test_routing_policy.py tests/test_facade_helpers.py tests/test_chat_astream.py tests/test_qa_backend.py -q
 ```
 
 分层约定：`domain/`、`api/` 不得直接 `import langchain`（由测试闸门检查）。
+
+建议手工冒烟：门户进入对话 / 测试台 → 各 mode 发一轮 → QA 建项目跑用例 →（可选）沙箱高危命令审批。
 
 ---
 
@@ -211,9 +274,9 @@ docker compose up -d --build
 
 ## 技术栈
 
-- **后端**：FastAPI、LangChain、LangGraph、Chroma、BM25、NetworkX、Redis/SQLite/MySQL  
-- **前端**：React 18、Vite、TypeScript、Electron（可选）  
-- **工具**：Tavily 搜索、MCP（含 Playwright E2E）、Cursor SDK（可选）
+- **后端**：FastAPI、LangChain、LangGraph、Chroma、BM25、NetworkX、Redis/SQLite/MySQL、Docker 沙箱  
+- **前端**：React 18、Vite、TypeScript、Ant Design、Electron（可选）  
+- **工具**：Tavily 搜索、MCP（含 Playwright E2E / QA UI）、Cursor SDK（可选）
 
 ---
 
