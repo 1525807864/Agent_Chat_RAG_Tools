@@ -1,4 +1,30 @@
-# Nexora（LangChain Demo Agent）
+<div align="center">
+
+<img src="docs/assets/nexora-logo.svg" alt="Nexora Logo" width="120" />
+
+# Nexora
+
+**多模式 AI Agent 平台 · 对话 · RAG · 测试工作台 · 沙箱**
+
+[功能概览](#功能概览) · [快速开始](#快速开始本地) · [部署](deploy/README.md) · [License](LICENSE)
+
+<br/>
+
+[![GitHub stars](https://img.shields.io/github/stars/1525807864/Agent_Chat_RAG_Tools?style=social)](https://github.com/1525807864/Agent_Chat_RAG_Tools/stargazers)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![React](https://img.shields.io/badge/frontend-React%2018-61dafb)](https://react.dev/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/1525807864/Agent_Chat_RAG_Tools?display_name=tag)](https://github.com/1525807864/Agent_Chat_RAG_Tools/releases)
+
+<br/>
+
+**语言 / Languages**
+
+[中文](README.md) · [English](README_en.md) · [日本語](README_ja.md) · [한국어](docs/i18n/README_ko.md) · [Español](docs/i18n/README_es.md)
+
+</div>
+
+---
 
 基于 LangChain / LangGraph 的多模式 AI Agent 平台：普通对话、混合检索 RAG、结构化咨询、GraphRAG、ReAct 单 Agent（含 MCP）、多智能体协作；提供 FastAPI、Vite/React 前端（AgentHub 风格领域门户）、自动测试工作台，以及可选 Electron 桌面端。
 
@@ -92,6 +118,8 @@ docker/sandbox/        沙箱镜像 Dockerfile
 shared/timeutil.py     北京时间
 deploy/                Nginx、systemd、更新脚本
 tests/                 pytest
+docs/assets/           README 展示用 Logo
+docs/i18n/             其它语言简短说明
 ```
 
 更细的云部署说明见 [deploy/README.md](deploy/README.md)。
@@ -255,6 +283,8 @@ python -m pytest tests/test_orchestration_smoke.py tests/test_orchestrator_matri
 
 建议手工冒烟：门户进入对话 / 测试台 → 各 mode 发一轮 → QA 建项目跑用例 →（可选）沙箱高危命令审批。
 
+DeepEval 评测（可选，需另装开发依赖）：见 `tests/power_test/`。
+
 ---
 
 ## 生产部署（摘要）
@@ -277,6 +307,20 @@ docker compose up -d --build
 - **后端**：FastAPI、LangChain、LangGraph、Chroma、BM25、NetworkX、Redis/SQLite/MySQL、Docker 沙箱  
 - **前端**：React 18、Vite、TypeScript、Ant Design、Electron（可选）  
 - **工具**：Tavily 搜索、MCP（含 Playwright E2E / QA UI）、Cursor SDK（可选）
+
+---
+
+## 多语言文档
+
+| 语言 | 文件 |
+|------|------|
+| 中文（主文档） | [README.md](README.md) |
+| English | [README_en.md](README_en.md) |
+| 日本語 | [README_ja.md](README_ja.md) |
+| 한국어 | [docs/i18n/README_ko.md](docs/i18n/README_ko.md) |
+| Español | [docs/i18n/README_es.md](docs/i18n/README_es.md) |
+
+完整细节以中文主文档为准；其它语言为导读与快速开始摘要。
 
 ---
 
