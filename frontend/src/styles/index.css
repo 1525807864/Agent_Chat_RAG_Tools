@@ -3,17 +3,19 @@
  * 下面尽量对每一条声明都写明用途。
  */
 
-/* ========== 设计令牌：颜色/字体/行高 ========== */
+/* ========== 设计令牌：与门户首页一致（墨色 + 香槟金） ========== */
 :root {
-  --bg: #f3f5f7; /* 页面最底层背景色 */
+  --bg: #f3f4f6; /* 页面最底层：冷石色 */
   --panel: #ffffff; /* 侧栏/顶栏面板背景 */
-  --border: #d8dee6; /* 统一边框色 */
-  --text: #1a2332; /* 主文字色 */
-  --muted: #5c6b7a; /* 次要文字色 */
-  --accent: #0f766e; /* Nexora 青绿主色 */
-  --accent-soft: #ecfdf5; /* 主色浅底（hover/选中） */
-  --user-bubble: #6c7b77; /* 用户气泡背景 */
-  --assistant-bubble: #eef1f5; /* 助手气泡背景 */
+  --border: #e5e7eb; /* 统一细描边 */
+  --text: #111827; /* 主文字墨色 */
+  --muted: #6b7280; /* 次要文字灰 */
+  --accent: #1e293b; /* 主色：墨海军（按钮/选中） */
+  --accent-soft: #eef2f6; /* 主色浅底（hover/选中） */
+  --gold: #c5a572; /* 香槟金点缀 */
+  --gold-soft: #e8d5b5; /* 香槟金浅 */
+  --user-bubble: #475569; /* 用户气泡：石板灰 */
+  --assistant-bubble: #f8fafc; /* 助手气泡浅底 */
   --danger: #b42318; /* 危险/错误色 */
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06); /* 气泡轻阴影 */
   font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; /* 正文字体栈 */
@@ -116,6 +118,8 @@ button {
   font-weight: 650;
   letter-spacing: 0.02em;
   color: var(--text);
+  border-bottom: 2px solid var(--gold); /* 与门户香槟金底线一致 */
+  padding-bottom: 2px;
 }
 
 /* 消息图标按钮：标题右侧，点击切换左侧会话栏 */
@@ -175,20 +179,21 @@ button {
 /* ========== 三栏 Grid 外壳（在顶栏下方） ========== */
 .app {
   display: grid; /* 三列网格 */
-  grid-template-columns: 240px 1fr 280px; /* 左会话 | 中自适应 | 右设置 */
+  grid-template-columns: 240px 1fr minmax(300px, 340px); /* 左会话 | 中自适应 | 右设置 */
   flex: 1; /* 占满顶栏以下剩余高度 */
   min-height: 0; /* 允许子项收缩滚动（防撑破） */
 }
 
 /* 收起左侧栏：左列宽度为 0（SessionList 同时不渲染） */
 .app.sidebar-collapsed {
-  grid-template-columns:  1fr 280px;
+  grid-template-columns: 1fr minmax(300px, 340px);
 }
 
 /* 侧栏面板通用外壳 */
 .panel {
   background: var(--panel); /* 白底 */
   border-right: 1px solid var(--border); /* 右边分隔线 */
+  min-width: 0; /* 防止 grid 子项被长文本撑破 */
   min-height: 0; /* 允许内部 overflow */
   display: flex; /* 头+体纵向 */
   flex-direction: column; /* 上标题下内容 */
@@ -202,20 +207,24 @@ button {
 
 /* 面板标题行 */
 .panel-header {
-  padding: 14px 16px; /* 内边距 */
+  padding: 12px 14px; /* 内边距 */
   border-bottom: 1px solid var(--border); /* 底部分隔 */
   font-weight: 600; /* 加粗标题 */
   display: flex; /* 左右排布标题与按钮 */
+  flex-wrap: wrap; /* 窄栏时按钮换行 */
   align-items: center; /* 垂直居中 */
   justify-content: space-between; /* 两端对齐 */
   gap: 8px; /* 子项间距 */
+  row-gap: 8px; /* 换行行距 */
+  min-width: 0; /* 防撑破 */
 }
 
 /* 面板可滚动内容区 */
 .panel-body {
   flex: 1; /* 吃掉剩余高度 */
   overflow: auto; /* 内容过多滚动 */
-  padding: 12px; /* 内边距 */
+  padding: 14px; /* 内边距 */
+  min-width: 0; /* 防横向撑破 */
   min-height: 0; /* flex 子项可收缩 */
 }
 
@@ -261,11 +270,24 @@ button {
   margin-left: auto; /* 推到行尾 */
   font-size: 0.85rem; /* 小字 */
   color: var(--muted); /* 默认灰色 */
+  max-width: min(420px, 48vw); /* 限制宽度 */
+  overflow: hidden; /* 裁剪 */
+  text-overflow: ellipsis; /* 省略号 */
+  white-space: nowrap; /* 单行 */
+}
+
+/* ModeBar 探活 Tag：长 URL / modes 列表不撑破顶栏 */
+.topbar .ant-tag.health-tag {
+  max-width: min(420px, 48vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 /* 探活成功 */
 .health.ok {
-  color: var(--accent); /* 绿色 */
+  color: var(--gold); /* 就绪用香槟金点缀 */
 }
 
 /* 探活失败 */
@@ -477,10 +499,10 @@ button {
   cursor: not-allowed; /* 禁止光标 */
 }
 
-/* 主按钮 */
+/* 主按钮（墨底 + 香槟金边，对齐门户） */
 .btn.primary {
-  background: var(--accent); /* 主色底 */
-  border-color: var(--accent); /* 主色边 */
+  background: var(--accent); /* 墨色底 */
+  border-color: var(--gold); /* 香槟金边 */
   color: #fff; /* 白字 */
 }
 
@@ -506,11 +528,13 @@ button {
 /* 会话 id 选择按钮 */
 .session-item button.pick {
   flex: 1; /* 占满剩余宽 */
+  min-width: 0; /* 允许省略号在 flex 中生效 */
   text-align: left; /* 左对齐文本 */
   border: 1px solid transparent; /* 预留边框位 */
   background: transparent; /* 透明底 */
   border-radius: 6px; /* 圆角 */
-  padding: 8px 10px; /* 内边距 */
+  padding: 10px 12px; /* 内边距（高亮条更透气） */
+  line-height: 1.35; /* 行高 */
   color: var(--text); /* 文字色 */
   overflow: hidden; /* 裁剪溢出 */
   text-overflow: ellipsis; /* 省略号 */
@@ -524,8 +548,9 @@ button {
 
 /* 当前会话高亮 */
 .session-item button.pick.active {
-  background: var(--accent-soft); /* 浅绿底 */
-  border-color: #b7ddd0; /* 绿边 */
+  background: var(--accent-soft); /* 浅石板底 */
+  border-color: var(--gold-soft); /* 香槟金浅边 */
+  box-shadow: inset 3px 0 0 var(--gold); /* 左侧金条点缀 */
   font-weight: 600; /* 加粗 */
 }
 
@@ -533,6 +558,19 @@ button {
 .muted {
   color: var(--muted); /* 灰色 */
   font-size: 0.9rem; /* 略小 */
+}
+
+/* 会话列表「当前 id」过长时省略 */
+.session-current-id {
+  margin-top: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.session-current-id code {
+  font-size: 0.75rem;
 }
 
 /* 错误横幅 */
@@ -555,7 +593,13 @@ button {
 .kb-form {
   display: flex; /* 纵向表单 */
   flex-direction: column; /* 列 */
-  gap: 8px; /* 间距 */
+  gap: 10px; /* 间距 */
+  min-width: 0; /* 防撑破 */
+}
+
+.kb-form label {
+  line-height: 1.45; /* 行高 */
+  overflow-wrap: anywhere; /* 长说明换行 */
 }
 
 /* 知识库目录输入 */
@@ -563,6 +607,8 @@ button {
   border: 1px solid var(--border); /* 边框 */
   border-radius: 6px; /* 圆角 */
   padding: 8px 10px; /* 内边距 */
+  max-width: 100%; /* 不超出面板 */
+  box-sizing: border-box; /* 含边框计入宽 */
 }
 
 /* 建库结果 / 统计块 */
@@ -573,15 +619,42 @@ button {
   background: #f7f9fb; /* 浅灰底 */
   border-radius: 8px; /* 圆角 */
   border: 1px solid var(--border); /* 边框 */
-  font-size: 0.9rem; /* 字号 */
-  white-space: pre-wrap; /* 保留换行 */
+  font-size: 0.8rem; /* 字号 */
+  line-height: 1.45; /* 行高 */
+  white-space: pre-wrap; /* 保留换行（JSON 统计） */
+  overflow-wrap: anywhere; /* 长路径折行 */
   word-break: break-word; /* 长词折行 */
+  max-height: 180px; /* 过高时内部滚动 */
+  overflow: auto; /* 滚动 */
+  min-width: 0; /* 防撑破 */
+}
+
+/* 已上传文件列表（逐行，不用整段字符串） */
+.kb-doc-list {
+  margin-top: 8px; /* 与标题间距 */
+  display: flex; /* 纵向 */
+  flex-direction: column; /* 列 */
+  gap: 4px; /* 行距 */
+  white-space: normal; /* 覆盖 kb-stats 的 pre-wrap */
+}
+
+.kb-doc-row {
+  overflow: hidden; /* 裁剪 */
+  text-overflow: ellipsis; /* 省略号 */
+  white-space: nowrap; /* 单行 */
+  color: var(--text); /* 正文色 */
+}
+
+.kb-doc-empty {
+  color: var(--muted); /* 次要色 */
+  white-space: normal; /* 可换行 */
 }
 
 /* ========== 右侧堆叠栏 ========== */
 .side-stack {
   display: flex; /* 上下堆 Settings + Knowledge */
   flex-direction: column; /* 列 */
+  min-width: 0; /* 防横向撑破 */
   min-height: 0; /* 可收缩 */
   border-left: 1px solid var(--border); /* 左边分隔 */
   background: var(--panel); /* 白底 */
@@ -596,8 +669,14 @@ button {
 /* 上半：模型设置固定比例高度 */
 .side-stack .settings-panel {
   flex: 0 0 auto; /* 按内容高度 */
-  max-height: 48%; /* 最多约占一半 */
+  max-height: 46%; /* 最多约占一半 */
+  overflow: hidden; /* 超出由 panel-body 滚动 */
   border-bottom: 1px solid var(--border); /* 与下方分隔 */
+}
+
+/* 设置区内容过多时滚动，不顶破面板 */
+.side-stack .settings-panel .panel-body {
+  overflow: auto;
 }
 
 /* 下半：知识库吃剩余高度 */
@@ -610,16 +689,28 @@ button {
 
 /* 设置说明文字 */
 .settings-hint {
-  margin: 0 0 10px; /* 下边距 */
-  font-size: 0.85rem; /* 小字 */
-  line-height: 1.4; /* 行高 */
+  margin: 0 0 12px; /* 下边距 */
+  font-size: 0.78rem; /* 小字 */
+  line-height: 1.55; /* 行高更透气 */
+  overflow-wrap: anywhere; /* 长句不溢出 */
 }
 
 /* 设置表单布局 */
 .settings-form {
   display: flex; /* 纵向 */
   flex-direction: column; /* 列 */
-  gap: 8px; /* 间距 */
+  gap: 6px; /* 标签与输入略紧，组间靠 label margin */
+  min-width: 0; /* 防撑破 */
+}
+
+.settings-form label {
+  margin-top: 4px; /* 与上一输入拉开 */
+  font-size: 0.8rem; /* 略小 */
+  line-height: 1.3;
+}
+
+.settings-form label:first-of-type {
+  margin-top: 0; /* 首项不加顶距 */
 }
 
 /* 设置输入框 */
@@ -628,6 +719,13 @@ button {
   border-radius: 6px; /* 圆角 */
   padding: 8px 10px; /* 内边距 */
   width: 100%; /* 拉满宽 */
+  max-width: 100%; /* 不超出 */
+  min-width: 0; /* flex/grid 内可收缩 */
+  box-sizing: border-box; /* 含边框计入宽 */
+  font-size: 0.82rem; /* 长 URL 更易装下 */
+  overflow: hidden; /* 裁剪 */
+  text-overflow: ellipsis; /* 省略号 */
+  white-space: nowrap; /* 单行展示 */
 }
 
 /* 保存/清除按钮行 */
@@ -1059,13 +1157,13 @@ button {
   font-size: 0.85rem;
 }
 
-/* 顶栏「测试工作台」按钮主色；工作台内部样式见 qa-workbench.css */
+/* 顶栏工作台主按钮；与门户墨色+金边一致 */
 .btn-qa-primary {
-  background: #0f766e;
+  background: var(--accent);
   color: #fff;
-  border: none;
+  border: 1px solid var(--gold);
 }
 
 .btn-qa-primary:hover:not(:disabled) {
-  background: #0d9488;
+  filter: brightness(1.08);
 }

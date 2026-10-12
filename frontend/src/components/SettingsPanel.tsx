@@ -29,12 +29,7 @@ export function SettingsPanel({ draft, setDraft, onSave, onClear, savedHint }: P
       <div className="panel-header">模型设置</div>
       {/* 主体 */}
       <div className="panel-body">
-        {/* 说明文字 */}
-        <p className="muted settings-hint">
-          凭证只保存在本机浏览器。留空 Key 时，后端会用服务端 .env 兜底。
-          API Base 是大模型厂商地址，不是前端的 VITE_API_BASE。
-        </p>
-
+        {/* 说明文字：两行短句，避免挤满窄栏 */}
         {/* 表单 */}
         <div className="settings-form">
           {/* API Key 标签 */}
@@ -49,6 +44,7 @@ export function SettingsPanel({ draft, setDraft, onSave, onClear, savedHint }: P
             value={draft.api_key} // 受控
             onChange={(e) => patch("api_key", e.target.value)} // 写草稿
             placeholder="sk-...（可留空走服务端 .env）" // 占位
+            title={draft.api_key || undefined}
           />
 
           {/* API Base */}
@@ -61,6 +57,7 @@ export function SettingsPanel({ draft, setDraft, onSave, onClear, savedHint }: P
             value={draft.api_base}
             onChange={(e) => patch("api_base", e.target.value)}
             placeholder="https://api.deepseek.com/v1"
+            title={draft.api_base || undefined}
           />
 
           {/* Model Name */}
@@ -73,6 +70,7 @@ export function SettingsPanel({ draft, setDraft, onSave, onClear, savedHint }: P
             value={draft.model_name}
             onChange={(e) => patch("model_name", e.target.value)}
             placeholder="deepseek-v4-flash"
+            title={draft.model_name || undefined}
           />
 
           {/* 操作按钮 */}

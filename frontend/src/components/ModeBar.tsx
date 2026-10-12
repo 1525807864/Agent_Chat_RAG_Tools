@@ -112,7 +112,11 @@ export function ModeBar({
           <span className="ant-modebar-label">流式</span>
         </Space>
 
-        <Tag color={healthColor} title="GET /health/ready">
+        <Tag
+          className="health-tag"
+          color={healthColor}
+          title={`${healthLabel}\nGET /health/ready`}
+        >
           {healthLabel}
         </Tag>
       </Space>

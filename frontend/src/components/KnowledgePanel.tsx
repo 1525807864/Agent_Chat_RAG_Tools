@@ -155,10 +155,21 @@ export function KnowledgePanel() {
 
         <div className="kb-stats" style={{ marginTop: 12 }}>
           <strong>已上传文件（{docs.length}）</strong>
-          {"\n"}
-          {docs.length === 0
-            ? "（空）请先选择文件上传"
-            : docs.map((d) => `${d.path}  ·  ${d.size} bytes`).join("\n")}
+          <div className="kb-doc-list">
+            {docs.length === 0 ? (
+              <div className="kb-doc-empty">（空）请先选择文件上传</div>
+            ) : (
+              docs.map((d) => (
+                <div
+                  key={d.path}
+                  className="kb-doc-row"
+                  title={`${d.path}  ·  ${d.size} bytes`}
+                >
+                  {d.path} · {d.size} bytes
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {statsText && (

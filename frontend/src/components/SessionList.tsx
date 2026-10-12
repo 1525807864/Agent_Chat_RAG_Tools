@@ -111,31 +111,39 @@ export function SessionList({ currentId, onSelect, onNew }: Props) {
     <aside className="panel">
       <div className="panel-header">
         <span>会话</span>
-        <Space size={6}>
-          <Button size="small" icon={<PlusOutlined />} onClick={onNew}>
-            新建
-          </Button>
+        <Space size={4}>
+          <Button
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={onNew}
+            title="新建会话"
+            aria-label="新建会话"
+          />
           <Button
             size="small"
             icon={<ReloadOutlined />}
             onClick={() => void refresh()}
             loading={loading}
-          >
-            刷新
-          </Button>
+            title="刷新列表"
+            aria-label="刷新列表"
+          />
           <Button
             size="small"
             danger
             icon={<DeleteOutlined />}
             onClick={() => void onDeleteAll()}
             disabled={loading || rows.length === 0}
-          >
-            全部
-          </Button>
+            title="删除全部会话"
+            aria-label="删除全部会话"
+          />
         </Space>
       </div>
       <div className="panel-body">
-        <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        <Typography.Paragraph
+          type="secondary"
+          className="session-current-id"
+          title={currentId}
+        >
           当前：<Typography.Text code>{currentId}</Typography.Text>
         </Typography.Paragraph>
         {err ? <p className="error-banner">{err}</p> : null}

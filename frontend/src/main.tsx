@@ -9,29 +9,30 @@ import App from "./App";
 import "./styles/index.css";
 import "./styles/qa-workbench.css";
 
-/** Nexora 商业青绿主题：与测试平台 / 品牌色一致 */
+/** Nexora 门户同款主题：墨海军 + 香槟金点缀（对齐 HomePortal） */
 const nexoraTheme = {
   token: {
-    colorPrimary: "#0f766e",
-    colorInfo: "#0f766e",
-    colorSuccess: "#0f766e",
-    colorLink: "#0f766e",
+    colorPrimary: "#1e293b",
+    colorInfo: "#1e293b",
+    colorSuccess: "#c5a572",
+    colorLink: "#c5a572",
     borderRadius: 8,
     fontFamily:
       '"Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif',
-    colorBgLayout: "#f3f5f7",
-    colorText: "#1a2332",
-    colorBorder: "#d8dee6",
+    colorBgLayout: "#f3f4f6",
+    colorText: "#111827",
+    colorBorder: "#e5e7eb",
   },
   components: {
     Button: {
       controlHeight: 32,
       fontWeight: 500,
+      primaryShadow: "none",
     },
     Menu: {
       darkItemBg: "transparent",
-      darkItemSelectedBg: "#0f766e",
-      darkItemHoverBg: "rgba(15, 118, 110, 0.35)",
+      darkItemSelectedBg: "#1e293b",
+      darkItemHoverBg: "rgba(197, 165, 114, 0.18)",
     },
     Layout: {
       headerBg: "#ffffff",
