@@ -1,0 +1,98 @@
+/* 沙箱高危确认：底部 Sheet，贴合 qa-workbench teal */
+
+.sbx-approval-overlay {
+    position: fixed; /* 盖住全站 */
+    inset: 0; /* 四边贴齐 */
+    z-index: 1100; /* 高于 Ant 普通 Modal 默认档附近 */
+    display: flex; /* 底部居中 */
+    align-items: flex-end; /* 贴底 */
+    justify-content: center; /* 水平居中 */
+    padding: 16px; /* 外边距 */
+    background: rgba(15, 23, 42, 0.35); /* 轻遮罩 */
+    animation: sbx-fade-in 160ms ease-out; /* 入场 */
+  }
+  
+  .sbx-approval-sheet {
+    width: min(560px, 100%); /* 最大宽度 */
+    background: #fff; /* 白底 */
+    border-radius: 16px 16px 12px 12px; /* 圆角 */
+    border-top: 3px solid #b45309; /* 高危顶边 */
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18); /* 投影 */
+    padding: 16px 18px 14px; /* 内边距 */
+    animation: sbx-slide-up 180ms ease-out; /* 上滑 */
+  }
+  
+  .sbx-approval-head {
+    display: flex; /* 标题与徽章并排 */
+    justify-content: space-between; /* 两端对齐 */
+    align-items: flex-start; /* 顶对齐 */
+    gap: 12px; /* 间距 */
+    margin-bottom: 10px; /* 下边距 */
+  }
+  
+  .sbx-approval-title {
+    font-size: 1rem; /* 标题字号 */
+    color: #0f172a; /* 深字 */
+  }
+  
+  .sbx-approval-meta {
+    margin: 4px 0 0 !important; /* 压掉 antd 默认 margin */
+    font-size: 0.8rem; /* 次级信息 */
+  }
+  
+  .sbx-approval-badge {
+    flex-shrink: 0; /* 不挤扁 */
+    padding: 2px 8px; /* 内边距 */
+    border-radius: 999px; /* 胶囊 */
+    background: #fff7ed; /* 浅橙底 */
+    color: #b45309; /* 橙字 */
+    font-size: 0.75rem; /* 小字 */
+    font-weight: 600; /* 加粗 */
+  }
+  
+  .sbx-approval-cmd {
+    margin: 0 0 10px; /* 外边距 */
+    padding: 12px 14px; /* 内边距 */
+    border-radius: 10px; /* 圆角 */
+    background: #0f172a; /* 深底 */
+    color: #e2e8f0; /* 浅字 */
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; /* 等宽 */
+    font-size: 0.85rem; /* 字号 */
+    line-height: 1.45; /* 行高 */
+    white-space: pre-wrap; /* 折行 */
+    word-break: break-all; /* 长参数断开 */
+    max-height: 180px; /* 过高可滚 */
+    overflow: auto; /* 滚动 */
+  }
+  
+  .sbx-approval-risk {
+    margin: 0 0 14px !important; /* 风险说明间距 */
+    color: #9a3412; /* 砖红提示 */
+    font-size: 0.88rem; /* 字号 */
+  }
+  
+  .sbx-approval-actions {
+    display: flex; /* 按钮行 */
+    justify-content: flex-end; /* 右对齐 */
+    gap: 8px; /* 间距 */
+  }
+  
+  .sbx-approval-allow.ant-btn-primary {
+    background: var(--accent, #1e293b); /* 墨色主按钮 */
+    border-color: var(--gold, #c5a572); /* 香槟金边 */
+  }
+  
+  .sbx-approval-allow.ant-btn-primary:hover {
+    filter: brightness(1.08); /* 悬停略亮 */
+    border-color: var(--gold, #c5a572) !important;
+  }
+  
+  @keyframes sbx-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes sbx-slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
