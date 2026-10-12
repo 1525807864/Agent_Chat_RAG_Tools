@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from shared.timeutil import now_compact
 
 _log = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ def archive_session_jsonl(
     session_id: str,
 ) -> tuple[str, int]:
     """写入 archives/{tenant}/{session}_{ts}.jsonl，返回 (uri, bytes)。"""
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ts = now_compact()
     safe = "".join(
         c if c.isalnum() or c in "-_" else "_" for c in (session_id or "default")
     )[:128]

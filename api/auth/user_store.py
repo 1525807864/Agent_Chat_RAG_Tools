@@ -9,13 +9,13 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from api.auth.password import hash_password, verify_password
 from application.tenancy import sanitize_tenant_id
 from config.settings import get_settings
 from shared.path_security import get_project_root
+from shared.timeutil import now_iso, now_mysql
 
 # 用户不存在时仍走一次 verify，减轻时序侧信道（启动时算一次即可）
 _DUMMY_HASH = hash_password("dummy-timing-pad")
@@ -74,10 +74,6 @@ def _connect_mysql_with_retry(retries: int = 30, delay: float = 2.0):
     raise last
 
 
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
 def _init_mysql() -> None:
     settings = get_settings()
     conn = _connect_mysql_with_retry()
@@ -110,7 +106,7 @@ def _init_mysql() -> None:
                         settings.admin_username.strip(),
                         hash_password(settings.admin_password),
                         sanitize_tenant_id(settings.default_tenant_id),
-                        _now_utc(),
+                        now_mysql(),
                     ),
                 )
             elif settings.auth_bootstrap_reset_admin:
@@ -159,7 +155,7 @@ def _init_sqlite() -> None:
                     settings.admin_username.strip(),
                     hash_password(settings.admin_password),
                     sanitize_tenant_id(settings.default_tenant_id),
-                    datetime.now(timezone.utc).isoformat(),
+                    now_iso(),
                 ),
             )
         elif settings.auth_bootstrap_reset_admin:
@@ -283,7 +279,7 @@ def create_user(username: str, password: str, tenant_id: str | None = None) -> S
                     INSERT INTO users (username, password_hash, tenant_id, is_active, created_at)
                     VALUES (%s, %s, %s, 1, %s)
                     """,
-                    (username, hash_password(password), tenant, _now_utc()),
+                    (username, hash_password(password), tenant, now_mysql()),
                 )
             conn.commit()
         except pymysql.err.IntegrityError as exc:
@@ -304,7 +300,7 @@ def create_user(username: str, password: str, tenant_id: str | None = None) -> S
                     username,
                     hash_password(password),
                     tenant,
-                    datetime.now(timezone.utc).isoformat(),
+                    now_iso(),
                 ),
             )
             conn.commit()

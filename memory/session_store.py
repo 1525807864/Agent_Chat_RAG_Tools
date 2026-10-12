@@ -8,9 +8,10 @@
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 import json
 from pathlib import Path
+
+from shared.timeutil import now_iso, now_mysql
 
 
 class BaseSessionStore(ABC):
@@ -78,7 +79,7 @@ class RedisSessionStore(BaseSessionStore):
         msg = json.dumps({
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now_iso(),
         })
         await self.redis.lpush(key, msg)
         await self.redis.expire(key, self.ttl)
@@ -166,8 +167,8 @@ class SQLiteSessionStore(BaseSessionStore):
         import sqlite3
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
-                (session_id, role, content),
+                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                (session_id, role, content, now_mysql()),
             )
             conn.commit()
 
@@ -194,10 +195,17 @@ class SQLiteSessionStore(BaseSessionStore):
 
     async def delete_old_sessions(self, max_age_days: int = 7) -> int:
         import sqlite3
+        from datetime import timedelta
+
+        from shared.timeutil import now_beijing
+
+        cutoff = (now_beijing() - timedelta(days=max_age_days)).strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "DELETE FROM messages WHERE created_at < datetime('now', ?)",
-                (f"-{max_age_days} days",),
+                "DELETE FROM messages WHERE created_at < ?",
+                (cutoff,),
             )
             conn.commit()
             return cursor.rowcount

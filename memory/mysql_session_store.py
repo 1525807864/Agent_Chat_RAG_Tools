@@ -6,18 +6,13 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 # 复用项目里已有的连接参数拼装（密码只从环境读）
 from api.auth.mysql_conn import mysql_kwargs
 # 抽象基类：必须实现全部 abstract 方法
 from memory.session_store import BaseSessionStore
-
-
-def _now() -> str:
-    """统一 UTC 时间字符串，写入 DATETIME(6) 也可用原生 datetime。"""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+from shared.timeutil import now_mysql as _now
 
 
 class MySQLSessionStore(BaseSessionStore):
@@ -193,7 +188,7 @@ class MySQLSessionStore(BaseSessionStore):
                 cur.execute(
                     """
                     DELETE FROM chat_messages
-                    WHERE created_at < (UTC_TIMESTAMP(6) - INTERVAL %s DAY)
+                    WHERE created_at < (NOW(6) - INTERVAL %s DAY)
                     """,
                     (int(max_age_days),),
                 )

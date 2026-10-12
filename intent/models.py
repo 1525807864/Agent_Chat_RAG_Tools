@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 # 任务状态机：pending → in_progress → done | blocked | skipped
@@ -34,7 +33,9 @@ COMPLETION_VERDICTS = ("complete", "partial", "not_started")
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    from shared.timeutil import now_iso
+
+    return now_iso()
 
 
 def new_task_id() -> str:

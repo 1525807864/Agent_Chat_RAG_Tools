@@ -5,10 +5,10 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from api.auth.mysql_conn import mysql_kwargs
+from shared.timeutil import now_day
 
 
 def _connect():
@@ -66,7 +66,7 @@ def flush_dirty_tenants(redis_client: Any, *, reset_redis: bool = True) -> int:
     if not tenants:
         return 0
 
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = now_day()
     ok = 0
     conn = _connect()
     try:
@@ -89,7 +89,7 @@ def flush_dirty_tenants(redis_client: Any, *, reset_redis: bool = True) -> int:
                     """
                     INSERT INTO usage_events
                         (tenant_id, requests, tokens_in, tokens_out, source, created_at)
-                    VALUES (%s, %s, %s, %s, 'redis_flush', UTC_TIMESTAMP(6))
+                    VALUES (%s, %s, %s, %s, 'redis_flush', NOW(6))
                     """,
                     (tid, req, tin, tout),
                 )

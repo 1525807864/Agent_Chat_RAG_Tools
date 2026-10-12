@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +24,7 @@ from memory.memdir.paths import (
     project_memdir_path,
     session_memdir_file,
 )
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from shared.timeutil import now_iso as _now_iso
 
 
 def _empty_doc() -> dict[str, Any]:

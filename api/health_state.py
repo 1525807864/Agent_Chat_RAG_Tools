@@ -9,13 +9,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
-
-def _now_iso() -> str:
-    """UTC ISO8601，带 Z 后缀，避免 isoformat(format) 误用。"""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+from shared.timeutil import now_iso as _now_iso
 
 
 @dataclass

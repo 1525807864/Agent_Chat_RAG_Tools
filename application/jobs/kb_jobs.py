@@ -6,8 +6,9 @@ import asyncio
 import logging
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from typing import Any, Optional
+
+from shared.timeutil import now_epoch
 
 _log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class KbJob:
         return asdict(self)
 
     def touch(self) -> None:
-        self.updated_at = datetime.now(timezone.utc).timestamp()
+        self.updated_at = now_epoch()
 
 
 _jobs: dict[str, KbJob] = {}
@@ -139,7 +140,7 @@ def fail_stale_running_jobs(*, max_age_seconds: int = 60) -> int:
                         error='任务超时或服务重启，请重新构建',
                         progress=100
                     WHERE status='running'
-                      AND updated_at < (UTC_TIMESTAMP(6) - INTERVAL %s SECOND)
+                      AND updated_at < (NOW(6) - INTERVAL %s SECOND)
                     """,
                     (int(max_age_seconds),),
                 )
