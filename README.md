@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <img src="docs/assets/nexora-logo.svg" alt="Nexora Logo" width="120" />
 
