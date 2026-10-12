@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="docs/assets/nexora-logo.svg" alt="Nexora Logo" width="120" />
 
@@ -119,7 +119,7 @@ shared/timeutil.py     北京时间
 deploy/                Nginx、systemd、更新脚本
 tests/                 pytest
 docs/assets/           README 展示用 Logo
-docs/i18n/             其它语言简短说明
+docs/i18n/             其它语言完整说明（韩语 / 西语）
 ```
 
 更细的云部署说明见 [deploy/README.md](deploy/README.md)。
@@ -320,7 +320,7 @@ docker compose up -d --build
 | 한국어 | [docs/i18n/README_ko.md](docs/i18n/README_ko.md) |
 | Español | [docs/i18n/README_es.md](docs/i18n/README_es.md) |
 
-完整细节以中文主文档为准；其它语言为导读与快速开始摘要。
+各语言文档覆盖相同章节；中文为主维护版本，其它语言与之对齐。
 
 ---
 
