@@ -50,16 +50,21 @@ def filter_playwright_tools(tools: list[BaseTool]) -> list[BaseTool]:
 _NAVIGATE_HINTS = ("navigate", "goto", "open")
 
 
-def _playwright_connection() -> dict[str, Any]:
-    """从 Settings 拼 MCP stdio 连接配置。"""
+def _playwright_connection(*, headed: bool = False) -> dict[str, Any]:
+    """从 Settings 拼 MCP stdio。headed=True 时去掉 --headless，让 Chrome 可见。"""
     s = get_settings()
     cmd = (getattr(s, "e2e_mcp_command", None) or "npx").strip()
     # 默认: npx -y @playwright/mcp@latest --headless
     raw_args = (getattr(s, "e2e_mcp_args", None) or "").strip()
     if raw_args:
-        args = [a for a in raw_args.split(",") if a.strip()]
+        args = [a.strip() for a in raw_args.split(",") if a.strip()]
     else:
         args = ["-y", "@playwright/mcp@latest", "--headless"]
+    # UI 测试要看见窗口：只去掉 headless，保留 -y 与包名
+    if headed:
+        args = [a for a in args if a.lower() not in ("--headless", "headless")]
+        if not any("playwright/mcp" in a for a in args):
+            args = ["-y", "@playwright/mcp@latest"]
     return {
         "transport": "stdio",
         "command": cmd,
@@ -226,8 +231,9 @@ def e2e_system_hint(*, locked_url: str | None, user: str, password: str) -> str:
 async def playwright_mcp_session(
     *,
     locked_url: str | None = None,
+    headed: bool = False,
 ) -> AsyncIterator[list[BaseTool]]:
-    """有状态 Playwright MCP：在 yield 期间工具共享同一浏览器会话。"""
+    """有状态 Playwright MCP：yield 期间共用同一浏览器。headed 时弹出窗口。"""
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
         from langchain_mcp_adapters.tools import load_mcp_tools
@@ -238,9 +244,14 @@ async def playwright_mcp_session(
 
     settings = get_settings()
     allow_local = bool(settings.e2e_allow_local)
-    conn = _playwright_connection()
+    conn = _playwright_connection(headed=headed)
     client = MultiServerMCPClient({"playwright": conn})
-    _log.info("启动 Playwright MCP: %s %s", conn["command"], conn["args"])
+    _log.info(
+        "启动 Playwright MCP headed=%s: %s %s",
+        headed,
+        conn["command"],
+        conn["args"],
+    )
 
     async with client.session("playwright") as session:
         tools = await load_mcp_tools(session)

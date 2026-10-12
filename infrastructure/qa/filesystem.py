@@ -4,18 +4,13 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from domain.qa import QaCase, QaMember, QaProject, QaRun
 from shared.path_security import get_project_root
-
-
-def _now() -> str:
-    """UTC ISO 时间，方便排序。"""
-    return datetime.now(timezone.utc).isoformat()
+from shared.timeutil import now_iso as _now
 
 
 def _sid() -> str:
@@ -215,6 +210,17 @@ class QaFileStore:
                 items.append(_run_from_raw(raw))
         return items[:50]
 
+    def get_run(self, project_id: str, run_id: str) -> QaRun:
+        """读取单次运行；id 过滤防路径穿越。"""
+        rid = "".join(c for c in run_id if c.isalnum())
+        if not rid:
+            raise ValueError("非法 run_id")
+        path = self._proj_dir(project_id) / "runs" / f"{rid}.json"
+        raw = self._read_json(path, None)
+        if not isinstance(raw, dict) or not raw.get("id"):
+            raise FileNotFoundError(run_id)
+        return _run_from_raw(raw)
+
     # ---------- 成员（租户级 members.json）----------
 
     def _members_path(self) -> Path:
@@ -253,3 +259,14 @@ class QaFileStore:
                 self.save_members(members)
                 return members
         raise FileNotFoundError(member_id)
+
+    def delete_member(self, member_id: str) -> list[QaMember]:
+        """删除成员；至少保留一名 admin。"""
+        before = self.list_members()
+        members = [m for m in before if m.id != member_id]
+        if len(members) == len(before):
+            raise FileNotFoundError(member_id)
+        if not any(m.role == "admin" for m in members):
+            raise ValueError("不能删除最后一个管理员")
+        self.save_members(members)
+        return members

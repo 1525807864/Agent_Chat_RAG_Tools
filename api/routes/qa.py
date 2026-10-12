@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.auth.deps import AuthUser, get_current_user
+from application.qa.report_export import export_bytes
 from application.qa.serialize import case_out, member_out, project_out, run_out
 from application.qa.service import QaApplication
 from e2e.url_guard import E2EUrlError
@@ -43,6 +47,14 @@ class RunBody(BaseModel):
     case_ids: list[str] | None = None
 
 
+class UiRunBody(BaseModel):
+    """智能 UI 测试：name 给人看，goal 给模型执行。"""
+
+    name: str = Field(default="智能UI测试", max_length=80)
+    goal: str = Field(default="", max_length=4000)
+    base_url: str = Field(default="", max_length=512)
+
+
 class MemberBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=40)
     role: str = Field(default="view")
@@ -55,7 +67,6 @@ class MemberRoleBody(BaseModel):
 class AssistantBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     case_id: str | None = None
-
 
 # ---------- 项目 ----------
 
@@ -215,6 +226,111 @@ async def run_smoke(
     return run_out(run)
 
 
+@router.post("/projects/{project_id}/runs/ui")
+async def run_ui(
+    project_id: str,
+    body: UiRunBody,
+    user: AuthUser = Depends(get_current_user),
+):
+    """SSE：每步一条 data JSON，最后一条 type=done（含落盘后的 run）。"""
+    app = _app(user)
+
+    async def _gen():
+        try:
+            async for ev in app.iter_ui_run(
+                project_id,
+                name=body.name,
+                base_url=body.base_url,
+                goal=body.goal,
+            ):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except FileNotFoundError:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "done",
+                        "verdict": "error",
+                        "summary": "项目不存在",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+        except E2EUrlError as exc:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "done",
+                        "verdict": "error",
+                        "summary": str(exc),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+        except ValueError as exc:
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "done",
+                        "verdict": "error",
+                        "summary": str(exc),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+        except Exception as exc:  # noqa: BLE001
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "done",
+                        "verdict": "error",
+                        "summary": str(exc)[:500],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/export")
+async def export_run(
+    project_id: str,
+    run_id: str,
+    fmt: str = "xlsx",
+    user: AuthUser = Depends(get_current_user),
+):
+    """导出该次运行步骤证据。fmt=xlsx|docx|pdf。"""
+    try:
+        run = _app(user).get_run(project_id, run_id)
+        data, mime, filename = export_bytes(run, fmt)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="运行不存在") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ---------- 助手 ----------
 
 
@@ -270,4 +386,17 @@ async def patch_member(
         items = _app(user).set_member_role(member_id, body.role)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="成员不存在") from None
+    return {"items": [member_out(m) for m in items]}
+
+
+@router.delete("/members/{member_id}")
+async def delete_member(
+    member_id: str, user: AuthUser = Depends(get_current_user)
+):
+    try:
+        items = _app(user).delete_member(member_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="成员不存在") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"items": [member_out(m) for m in items]}

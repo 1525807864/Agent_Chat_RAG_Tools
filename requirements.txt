@@ -43,6 +43,7 @@ mcp>=1.0.0
 
 # ===== 环境与配置 =====
 python-dotenv>=1.0.0
+tzdata>=2024.1
 
 # ===== 鉴权 =====
 PyJWT>=2.8.0
@@ -63,6 +64,6 @@ pytest-mock>=3.14.0
 # ===== Word/Excel 解析（知识库上传） =====
 python-docx>=1.1.0
 openpyxl>=3.1.5
+reportlab>=4.2.0
 # ===== 评分与评估 =====
 deepeval>=0.1.0
-deepseek-eval>=0.1.0

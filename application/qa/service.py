@@ -1,12 +1,15 @@
-"""用例生成（模板）+ 冒烟执行（HTTP 探活）+ 助手规则改稿。判定不经过 LLM。"""
+"""用例生成（模板）+ 冒烟执行（HTTP 探活）+ UI 测试 + 助手规则改稿。判定不经过 LLM。"""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
+from application.qa.serialize import run_out
+from application.qa.ui_agent import iter_agent_ui
 from config.settings import get_settings
 from domain.qa import (
     KIND_API,
@@ -237,6 +240,74 @@ class QaApplication:
         )
         return self.store.add_run(run)
 
+    async def iter_ui_run(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        base_url: str,
+        goal: str = "",
+    ) -> AsyncIterator[dict[str, Any]]:
+        """有头智能 UI 测试：LLM 决定操作，Playwright 判定，最后落一条 QaRun。"""
+        proj = self.store.get_project(project_id)
+        title = (name or proj.name or "UI 测试").strip()[:80]
+        task = (goal or title).strip()[:4000]
+        raw_url = (base_url or proj.base_url or "").strip()
+        url = self._lock_url(raw_url)
+        if not url:
+            raise ValueError("请填写被测 URL")
+
+        collected: list[dict[str, Any]] = []
+        final: dict[str, Any] | None = None
+        async for ev in iter_agent_ui(name=title, url=url, goal=task):
+            if ev.get("type") == "done":
+                final = ev
+                continue  # 落盘后再发给前端
+            collected.append(ev)
+            yield ev
+
+        if final is None:
+            final = {
+                "verdict": "error",
+                "summary": "未收到结束事件",
+                "steps": collected,
+                "name": title,
+                "url": url,
+                "goal": task,
+            }
+
+        run = QaRun(
+            id=_sid(),
+            project_id=project_id,
+            case_ids=[],
+            verdict=str(final.get("verdict") or "error"),
+            summary=str(final.get("summary") or ""),
+            artifacts={
+                "kind": "ui-agent",
+                "name": title,
+                "goal": task,
+                "url": url,
+                "steps": final.get("steps") or collected,
+            },
+            created_at=_now(),
+        )
+        saved = self.store.add_run(run)
+        yield {
+            "type": "done",
+            "verdict": saved.verdict,
+            "summary": saved.summary,
+            "steps": final.get("steps") or collected,
+            "name": title,
+            "url": url,
+            "goal": task,
+            "run": run_out(saved),
+        }
+
+    def get_run(self, project_id: str, run_id: str) -> QaRun:
+        """导出前读取单次运行。"""
+        self.store.get_project(project_id)
+        return self.store.get_run(project_id, run_id)
+
     # ---------- 助手（规则改稿，第一期不调 LLM）----------
 
     def apply_assistant(
@@ -276,6 +347,9 @@ class QaApplication:
 
     def set_member_role(self, member_id: str, role: str) -> list[QaMember]:
         return self.store.set_member_role(member_id, role)
+
+    def delete_member(self, member_id: str) -> list[QaMember]:
+        return self.store.delete_member(member_id)
 
     # ---------- URL ----------
 
