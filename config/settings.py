@@ -325,7 +325,55 @@ class Settings(BaseSettings):
         default="-y,@playwright/mcp@latest,--headless",
         alias="E2E_MCP_ARGS",
     )
-
+    # ----------平台沙箱电脑（所有垂直agent共用执行面）
+    sandbox_enabled: bool = Field(default=False,alias="SANDBOX_ENABLED")
+    sandbox_runtime: str = Field(default="docker",alias="SANDBOX_RUNTIME")
+    sandbox_image: str = Field(default="nexora-sandbox:latest",alias="SANDBOX_IMAGE")
+    sandbox_network: str = Field(default="none",alias="SANDBOX_NETWORK")
+    sandbox_memory: str = Field(default="1g",alias="SANDBOX_MEMORY")
+    sandbox_cpus: int = Field(default=1,alias="SANDBOX_CPUS")
+    sandbox_pids: int = Field(default=256,ge=32,le=4096,alias="SANDBOX_PIDS")
+    sandbox_idle_sec: int = Field(default=1800,ge=60,le=86400,alias="SANDBOX_IDLE_SEC")
+    sandbox_exec_timeout_sec: int = Field(default=60,ge=1,le=600,alias="SANDBOX_EXEC_TIMEOUT_SEC")
+    sandbox_max_output_bytes: int = Field(default=65536, ge=1024, le=1_000_000, alias="SANDBOX_MAX_OUTPUT_BYTES")
+    sandbox_workspace_host: str = Field(default="data/sandbox",alias="SANDBOX_WORKSPACE_HOST")
+    sandbox_mode: str = Field(
+        default="workspace-write",
+        alias="SANDBOX_MODE",
+        description="read-only | workspace-write | full-in-container",
+    ) # 沙箱模式：读写工作区 | 写盘 | 全容器
+    sandbox_network_mode: str = Field(
+        default="deny",
+        alias="SANDBOX_NETWORK_MODE",
+        description="deny | allowlist | open:open内测使用",
+    )
+    sandbox_egress_allowlist: str = Field(
+        default="",
+        alias="SANDBOX_EGRESS_ALLOWLIST",
+        description="逗号分隔的域名列表，如 letcode.in,example.com",
+    )
+    sandbox_egress_proxy_port: int = Field(
+        default=18080,
+        ge=1024,
+        le=65535,
+        alias="SANDBOX_EGRESS_PROXY_PORT",
+    )
+    sandbox_approval: str = Field(
+        default="on-risky",
+        alias="SANDBOX_APPROVAL",
+        description="never | on-risky | always",
+    )
+    sandbox_max_sessions_per_tenant: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        alias="SANDBOX_MAX_SESSIONS_PER_TENANT",
+    )
+    sandbox_allow_shell_string: bool = Field(
+        default=False,
+        alias="SANDBOX_ALLOW_SHELL_STRING",
+        description="是否允许bash -lc 字符串（含管道符）：默认false，强制argv",
+    )
     #搜索配置
     tavily_api_key:str = Field(
         default="",
@@ -590,13 +638,39 @@ class Settings(BaseSettings):
         "populate_by_name": True,
     }
 
-
+    @field_validator("sandbox_runtime")
+    @classmethod
+    def validate_sandbox_runtime(cls,v:str)->str:
+        raw = (v or "docker").strip().lower()
+        if raw not in {"docker"}:
+            raise ValueError("SANDBOX_RUNTIME 目前只支持 docker")
+        return raw
     def cors_origin_list(self)->list[str]:
         #把CORS_ORIGINS拆成list，供Fastapi CORSMiddleware使用
         parts = (self.cors_origins or "").split(",")
         return [p.strip() for p in parts if p.strip()] #去掉空白，丢掉字段
-        
-
+    
+    @field_validator("sandbox_mode")
+    @classmethod
+    def validate_sandbox_mode(cls,v:str)->str:
+        raw = (v or "workspace-write").strip().lower()
+        if raw not in {"read-only","workspace-write","full-in-container"}:
+            raise ValueError("SANDBOX_MODE 只能是 read-only/workspace-write/full-in-container")
+        return raw 
+    @field_validator("sandbox_network_mode")
+    @classmethod 
+    def validate_sandbox_network_mode(cls,v:str)->str:
+        raw = (v or "deny").strip().lower()
+        if raw not in {"deny","allowlist","open"}:
+            raise ValueError("SANDBOX_NETWORK_MODE 只能是 deny/allowlist/open")
+        return raw 
+    @field_validator("sandbox_approval")
+    @classmethod 
+    def validate_sandbox_approval(cls,v:str)->str:
+        raw = (v or "on-risky").strip().lower()
+        if raw not in {"never","on-risky","always"}:
+            raise ValueError("SANDBOX_APPROVAL 只能是 never/on-risky/always")
+        return raw 
     #配置extar:ignore忽略.env里里面的未知字段，不会因为多余的配置导致程序无法运行
 # 全局单例：避免重复解析 .env / 构造 Settings。
 _settings: Optional[Settings] = None

@@ -30,6 +30,7 @@
 然后打开 http://127.0.0.1:8020/docs 查看交互式 API 文档。
 """
 from api.routes import qa as qa_routes
+from api.routes import sandbox as sandbox_routes
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -122,9 +123,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         else:
             health_state.mark_ready(checks=checks)
 
+        # 平台沙箱：恢复落盘会话 + 空闲回收
+        import asyncio
+
+        reaper_task: asyncio.Task | None = None
+        try:
+            from infrastructure.sandbox.reaper import sweep_and_reap_forever
+
+            reaper_task = asyncio.create_task(
+                sweep_and_reap_forever(), name="sandbox-reaper"
+            )
+        except Exception:  # noqa: BLE001
+            reaper_task = None
+
         try:
             yield
         finally:
+            if reaper_task is not None:
+                reaper_task.cancel()
+                try:
+                    await reaper_task
+                except asyncio.CancelledError:
+                    pass
             health_state.mark_not_ready()
             await shutdown_http_rate_limiter()
             await shutdown_agent_app()
@@ -194,6 +214,7 @@ app.include_router(knowledge_routes.router)
 app.include_router(billing_routes.router)
 app.include_router(download_routes.router)
 app.include_router(qa_routes.router)
+app.include_router(sandbox_routes.router)
 
 @app.get("/health/live", response_model=LiveHealthResponse, tags=["system"])
 @app.get("/health", response_model=HealthResponse, tags=["system"])
