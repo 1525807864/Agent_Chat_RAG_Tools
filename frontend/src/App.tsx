@@ -1,8 +1,9 @@
 /**
- * App：整页外壳 = 顶栏 +（对话三栏 | 测试工作台）
+ * App：整页外壳 = 顶栏 +（门户首页 | 对话三栏 | 测试工作台）
  * ------------------------------------------------
+ * workspace=home：AgentHub 式领域门户（默认）
  * workspace=chat：原会话 / 聊天 / 设置
- * workspace=qa：测试工作台（顶栏按钮切入）
+ * workspace=qa：测试工作台
  */
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Space, Tag, Tooltip } from "antd";
@@ -10,9 +11,11 @@ import {
   CommentOutlined,
   DownloadOutlined,
   ExperimentOutlined,
+  HomeOutlined,
   LogoutOutlined,
   MessageOutlined,
 } from "@ant-design/icons";
+import { HomePortal } from "./components/HomePortal";
 import { QaWorkspace } from "./components/QaWorkspace";
 import {
   desktopDownloadUrl,
@@ -64,10 +67,13 @@ export default function App() {
   const [downloadReady, setDownloadReady] = useState(false);
   const [downloadDetail, setDownloadDetail] = useState("正在检查安装包…");
 
-  // chat=原三栏对话；qa=测试工作台；hash 刷新后仍停在工作台
-  const [workspace, setWorkspace] = useState<"chat" | "qa">(() =>
-    window.location.hash === "#/qa" ? "qa" : "chat",
-  );
+  // home=门户；chat=对话；qa=测试工作台；hash 刷新后仍停在对应页
+  const [workspace, setWorkspace] = useState<"home" | "chat" | "qa">(() => {
+    const h = window.location.hash;
+    if (h === "#/qa") return "qa";
+    if (h === "#/chat") return "chat";
+    return "home";
+  });
 
   const { settings, draft, setDraft, save, clear, savedHint } = useLlmSettings();
 
@@ -133,7 +139,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
-    window.location.hash = workspace === "qa" ? "/qa" : "";
+    if (workspace === "qa") window.location.hash = "/qa";
+    else if (workspace === "chat") window.location.hash = "/chat";
+    else window.location.hash = "/";
   }, [workspace]);
 
   useEffect(() => {
@@ -263,8 +271,8 @@ export default function App() {
   return (
     /**
      * app-shell：整页外壳
-     * 上：顶栏（品牌 + 消息图标 + 测试工作台入口）
-     * 下：对话三栏 或 测试工作台
+     * 上：顶栏（品牌 + 下载/退出；工作台内可回门户）
+     * 下：门户 | 对话三栏 | 测试工作台
      */
     <div className="app-shell">
       <header className="app-header ant-app-header">
@@ -291,15 +299,32 @@ export default function App() {
         <div className="app-header-spacer" />
 
         <Space size={8} wrap>
-          <Button
-            type={workspace === "qa" ? "primary" : "default"}
-            icon={
-              workspace === "qa" ? <MessageOutlined /> : <ExperimentOutlined />
-            }
-            onClick={() => setWorkspace(workspace === "qa" ? "chat" : "qa")}
-          >
-            {workspace === "qa" ? "返回对话" : "测试工作台"}
-          </Button>
+          {workspace !== "home" ? (
+            <Button
+              icon={<HomeOutlined />}
+              onClick={() => setWorkspace("home")}
+            >
+              工作台首页
+            </Button>
+          ) : null}
+
+          {workspace === "chat" || workspace === "qa" ? (
+            <Button
+              type={workspace === "qa" ? "primary" : "default"}
+              icon={
+                workspace === "qa" ? (
+                  <MessageOutlined />
+                ) : (
+                  <ExperimentOutlined />
+                )
+              }
+              onClick={() =>
+                setWorkspace(workspace === "qa" ? "chat" : "qa")
+              }
+            >
+              {workspace === "qa" ? "返回对话" : "测试工作台"}
+            </Button>
+          ) : null}
 
           {!inElectron &&
             (downloadReady ? (
@@ -340,7 +365,16 @@ export default function App() {
         </Space>
       </header>
 
-      {workspace === "qa" ? (
+      {workspace === "home" ? (
+        <HomePortal
+          onEnter={(ws) => setWorkspace(ws)}
+          onNewChat={() => {
+            setWorkspace("chat");
+            newSession();
+          }}
+          userLabel="Lee"
+        />
+      ) : workspace === "qa" ? (
         <QaWorkspace />
       ) : (
         /*
