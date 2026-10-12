@@ -1,12 +1,12 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="docs/assets/nexora-logo.svg" alt="Nexora Logo" width="120" />
 
 # Nexora
 
-**多模式 AI Agent 平台 · 对话 · RAG · 测试工作台 · 沙箱**
+**澶氭ā寮?AI Agent 骞冲彴 路 瀵硅瘽 路 RAG 路 娴嬭瘯宸ヤ綔鍙?路 娌欑**
 
-[功能概览](#功能概览) · [快速开始](#快速开始本地) · [部署](deploy/README.md) · [License](LICENSE)
+[鍔熻兘姒傝](#鍔熻兘姒傝) 路 [蹇€熷紑濮媇(#蹇€熷紑濮嬫湰鍦? 路 [閮ㄧ讲](deploy/README.md) 路 [License](LICENSE)
 
 <br/>
 
@@ -18,127 +18,127 @@
 
 <br/>
 
-**语言 / Languages**
+**璇█ / Languages**
 
-[中文](README.md) · [English](README_en.md) · [日本語](README_ja.md) · [한국어](docs/i18n/README_ko.md) · [Español](docs/i18n/README_es.md)
+[涓枃](README.md) 路 [English](README_en.md) 路 [鏃ユ湰瑾瀅(README_ja.md) 路 [頃滉淡鞏碷(docs/i18n/README_ko.md) 路 [Espa帽ol](docs/i18n/README_es.md)
 
 </div>
 
 ---
 
-基于 LangChain / LangGraph 的多模式 AI Agent 平台：普通对话、混合检索 RAG、结构化咨询、GraphRAG、ReAct 单 Agent（含 MCP）、多智能体协作；提供 FastAPI、Vite/React 前端（AgentHub 风格领域门户）、自动测试工作台，以及可选 Electron 桌面端。
+鍩轰簬 LangChain / LangGraph 鐨勫妯″紡 AI Agent 骞冲彴锛氭櫘閫氬璇濄€佹贩鍚堟绱?RAG銆佺粨鏋勫寲鍜ㄨ銆丟raphRAG銆丷eAct 鍗?Agent锛堝惈 MCP锛夈€佸鏅鸿兘浣撳崗浣滐紱鎻愪緵 FastAPI銆乂ite/React 鍓嶇锛圓gentHub 椋庢牸棰嗗煙闂ㄦ埛锛夈€佽嚜鍔ㄦ祴璇曞伐浣滃彴锛屼互鍙婂彲閫?Electron 妗岄潰绔€?
 
-默认 LLM 兼容 DeepSeek / OpenAI / 智谱等协议；可选 Cursor Agent SDK 处理改代码类请求。时间统一按 **Asia/Shanghai（北京时间）** 写入与展示。
+榛樿 LLM 鍏煎 DeepSeek / OpenAI / 鏅鸿氨绛夊崗璁紱鍙€?Cursor Agent SDK 澶勭悊鏀逛唬鐮佺被璇锋眰銆傛椂闂寸粺涓€鎸?**Asia/Shanghai锛堝寳浜椂闂达級** 鍐欏叆涓庡睍绀恒€?
 
 ---
 
-## 产品入口
+## 浜у搧鍏ュ彛
 
-登录后默认进入 **工作台门户**（hash `#/`）：
+鐧诲綍鍚庨粯璁よ繘鍏?**宸ヤ綔鍙伴棬鎴?*锛坔ash `#/`锛夛細
 
-| 领域 | 状态 | 说明 |
+| 棰嗗煙 | 鐘舵€?| 璇存槑 |
 |------|------|------|
-| 对话平台 | 已上线 | `#/chat`，多模型 / RAG / Agent |
-| 自动测试平台 | 已上线 | `#/qa`，用例 / 执行 / 报告 / UI Agent |
-| 代码评审、运维、数据、知识库独立台等 | 占位 | 卡片「即将开放」，后续按垂直 Agent 接入 |
+| 瀵硅瘽骞冲彴 | 宸蹭笂绾?| `#/chat`锛屽妯″瀷 / RAG / Agent |
+| 鑷姩娴嬭瘯骞冲彴 | 宸蹭笂绾?| `#/qa`锛岀敤渚?/ 鎵ц / 鎶ュ憡 / UI Agent |
+| 浠ｇ爜璇勫銆佽繍缁淬€佹暟鎹€佺煡璇嗗簱鐙珛鍙扮瓑 | 鍗犱綅 | 鍗＄墖銆屽嵆灏嗗紑鏀俱€嶏紝鍚庣画鎸夊瀭鐩?Agent 鎺ュ叆 |
 
-顶栏可「工作台首页」返回门户；对话与测试台视觉统一为 **墨色 + 香槟金** 风格。
+椤舵爮鍙€屽伐浣滃彴棣栭〉銆嶈繑鍥為棬鎴凤紱瀵硅瘽涓庢祴璇曞彴瑙嗚缁熶竴涓?**澧ㄨ壊 + 棣欐閲?* 椋庢牸銆?
 
 ---
 
-## 功能概览
+## 鍔熻兘姒傝
 
-### 对话模式
+### 瀵硅瘽妯″紡
 
-| 模式 | 说明 |
+| 妯″紡 | 璇存槑 |
 |------|------|
-| `chat` | 会话记忆（Memory / Solip）+ Skills（`/skill`）+ SSE 真流式 |
-| `rag` | 稠密向量 + BM25 + RRF 混合检索，轻量查询路由 |
-| `consult` | 因子补全追问后再混合检索 |
-| `graph-rag` | 向量检索 + 知识图谱增强 |
-| `agent` | ReAct 工具环；工作区读写；通用 MCP；可选主动工具发现；E2E Playwright |
-| `multi` | sequential / debate / router 多智能体 |
+| `chat` | 浼氳瘽璁板繂锛圡emory / Solip锛? Skills锛坄/skill`锛? SSE 鐪熸祦寮?|
+| `rag` | 绋犲瘑鍚戦噺 + BM25 + RRF 娣峰悎妫€绱紝杞婚噺鏌ヨ璺敱 |
+| `consult` | 鍥犲瓙琛ュ叏杩介棶鍚庡啀娣峰悎妫€绱?|
+| `graph-rag` | 鍚戦噺妫€绱?+ 鐭ヨ瘑鍥捐氨澧炲己 |
+| `agent` | ReAct 宸ュ叿鐜紱宸ヤ綔鍖鸿鍐欙紱閫氱敤 MCP锛涘彲閫変富鍔ㄥ伐鍏峰彂鐜帮紱E2E Playwright |
+| `multi` | sequential / debate / router 澶氭櫤鑳戒綋 |
 
-### 平台能力
+### 骞冲彴鑳藉姏
 
-- **JWT 登录与租户**、知识库上传/建库、计费账本、HTTP 限流与内容过滤  
-- **自动测试工作台**：项目、用例、运行、报告导出、成员权限、项目知识库；UI Agent（Playwright）执行  
-- **平台沙箱**（可选 Docker）：统一执行面（shell / pwsh / 工作区 fs），策略、出网白名单、空闲回收；高危命令前端审批  
-- 生产 Docker Compose 部署  
+- **JWT 鐧诲綍涓庣鎴?*銆佺煡璇嗗簱涓婁紶/寤哄簱銆佽璐硅处鏈€丠TTP 闄愭祦涓庡唴瀹硅繃婊? 
+- **鑷姩娴嬭瘯宸ヤ綔鍙?*锛氶」鐩€佺敤渚嬨€佽繍琛屻€佹姤鍛婂鍑恒€佹垚鍛樻潈闄愩€侀」鐩煡璇嗗簱锛沀I Agent锛圥laywright锛夋墽琛? 
+- **骞冲彴娌欑**锛堝彲閫?Docker锛夛細缁熶竴鎵ц闈紙shell / pwsh / 宸ヤ綔鍖?fs锛夛紝绛栫暐銆佸嚭缃戠櫧鍚嶅崟銆佺┖闂插洖鏀讹紱楂樺嵄鍛戒护鍓嶇瀹℃壒  
+- 鐢熶骇 Docker Compose 閮ㄧ讲  
 
 ---
 
-## 架构（SOLID 分层）
+## 鏋舵瀯锛圫OLID 鍒嗗眰锛?
 
 ```text
-前端门户 / 对话三栏 / 测试工作台 / Electron
-        │
-        ▼
-api/（FastAPI：鉴权、SSE、QA、sandbox、参数校验）
-        │
-        ▼
-orchestration/（ChatOrchestrator：Cursor 路由 → mode Capability）
-        │
-        ▼
-application/（use_cases、qa、sandbox、MCP、Tools、Skills）
-        │
-        ▼
-domain/（RequestContext、RunResult、Ports）
-        │
-        ▼
-infrastructure/（rag、agents、memory、sandbox、qa filesystem、MCP）
+鍓嶇闂ㄦ埛 / 瀵硅瘽涓夋爮 / 娴嬭瘯宸ヤ綔鍙?/ Electron
+        鈹?
+        鈻?
+api/锛團astAPI锛氶壌鏉冦€丼SE銆丵A銆乻andbox銆佸弬鏁版牎楠岋級
+        鈹?
+        鈻?
+orchestration/锛圕hatOrchestrator锛欳ursor 璺敱 鈫?mode Capability锛?
+        鈹?
+        鈻?
+application/锛坲se_cases銆乹a銆乻andbox銆丮CP銆乀ools銆丼kills锛?
+        鈹?
+        鈻?
+domain/锛圧equestContext銆丷unResult銆丳orts锛?
+        鈹?
+        鈻?
+infrastructure/锛坮ag銆乤gents銆乵emory銆乻andbox銆乹a filesystem銆丮CP锛?
 ```
 
-核心门面：`application/services/agent_application.py`（依赖组装 + 兼容旧 `ask_*`）。  
-HTTP 对话统一走 `app.orchestrator.handle` / `stream`。  
-北京时间工具：`shared/timeutil.py`、前端 `frontend/src/utils/beijingTime.ts`。
+鏍稿績闂ㄩ潰锛歚application/services/agent_application.py`锛堜緷璧栫粍瑁?+ 鍏煎鏃?`ask_*`锛夈€? 
+HTTP 瀵硅瘽缁熶竴璧?`app.orchestrator.handle` / `stream`銆? 
+鍖椾含鏃堕棿宸ュ叿锛歚shared/timeutil.py`銆佸墠绔?`frontend/src/utils/beijingTime.ts`銆?
 
 ---
 
-## 目录结构（节选）
+## 鐩綍缁撴瀯锛堣妭閫夛級
 
 ```text
-api/                   FastAPI 路由（chat / sessions / knowledge / qa / sandbox）
-application/           用例、qa（含 ui_agent / report_export）、sandbox 服务
+api/                   FastAPI 璺敱锛坈hat / sessions / knowledge / qa / sandbox锛?
+application/           鐢ㄤ緥銆乹a锛堝惈 ui_agent / report_export锛夈€乻andbox 鏈嶅姟
 orchestration/         ChatOrchestrator + Capability
-domain/                领域模型与 Port
-agents/                ReAct / ToolCalling / 多 Agent 图
-rag/                   向量、BM25、混合检索、图谱、结构化咨询
-memory/                会话存储与 MemoryFacade
+domain/                棰嗗煙妯″瀷涓?Port
+agents/                ReAct / ToolCalling / 澶?Agent 鍥?
+rag/                   鍚戦噺銆丅M25銆佹贩鍚堟绱€佸浘璋便€佺粨鏋勫寲鍜ㄨ
+memory/                浼氳瘽瀛樺偍涓?MemoryFacade
 infrastructure/
-  sandbox/             Docker 运行时、策略、审批风险、reaper
-  qa/                  测试平台文件系统
+  sandbox/             Docker 杩愯鏃躲€佺瓥鐣ャ€佸鎵归闄┿€乺eaper
+  qa/                  娴嬭瘯骞冲彴鏂囦欢绯荤粺
 frontend/src/
-  portal/              领域门户配置 domains.ts
+  portal/              棰嗗煙闂ㄦ埛閰嶇疆 domains.ts
   components/HomePortal.tsx
-  components/qa/       测试工作台页面
-  components/sandbox/  高危命令审批面板
-  styles/portal.css    门户 / 全局墨金主题令牌见 index.css
-docker/sandbox/        沙箱镜像 Dockerfile
-shared/timeutil.py     北京时间
-deploy/                Nginx、systemd、更新脚本
+  components/qa/       娴嬭瘯宸ヤ綔鍙伴〉闈?
+  components/sandbox/  楂樺嵄鍛戒护瀹℃壒闈㈡澘
+  styles/portal.css    闂ㄦ埛 / 鍏ㄥ眬澧ㄩ噾涓婚浠ょ墝瑙?index.css
+docker/sandbox/        娌欑闀滃儚 Dockerfile
+shared/timeutil.py     鍖椾含鏃堕棿
+deploy/                Nginx銆乻ystemd銆佹洿鏂拌剼鏈?
 tests/                 pytest
-docs/assets/           README 展示用 Logo
-docs/i18n/             其它语言简短说明
+docs/assets/           README 灞曠ず鐢?Logo
+docs/i18n/             鍏跺畠璇█绠€鐭鏄?
 ```
 
-更细的云部署说明见 [deploy/README.md](deploy/README.md)。
+鏇寸粏鐨勪簯閮ㄧ讲璇存槑瑙?[deploy/README.md](deploy/README.md)銆?
 
 ---
 
-## 环境要求
+## 鐜瑕佹眰
 
-- Python 3.11+（推荐 3.12/3.13）
-- Node.js 18+（前端 / Electron）
-- 可选：Redis、MySQL 8（生产 Compose 自带）
-- 可选：Docker（平台沙箱 `SANDBOX_ENABLED=true`）
-- 可选：npx（Playwright MCP / E2E / QA UI Agent）
+- Python 3.11+锛堟帹鑽?3.12/3.13锛?
+- Node.js 18+锛堝墠绔?/ Electron锛?
+- 鍙€夛細Redis銆丮ySQL 8锛堢敓浜?Compose 鑷甫锛?
+- 鍙€夛細Docker锛堝钩鍙版矙绠?`SANDBOX_ENABLED=true`锛?
+- 鍙€夛細npx锛圥laywright MCP / E2E / QA UI Agent锛?
 
 ---
 
-## 快速开始（本地）
+## 蹇€熷紑濮嬶紙鏈湴锛?
 
-### 1. 后端
+### 1. 鍚庣
 
 ```bash
 cd LangChain_Demo
@@ -150,10 +150,10 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -r requirements.txt
-copy .env.example .env   # 或 cp .env.example .env
+copy .env.example .env   # 鎴?cp .env.example .env
 ```
 
-编辑 `.env`，至少配置：
+缂栬緫 `.env`锛岃嚦灏戦厤缃細
 
 ```env
 DEEPSEEK_API_KEY=sk-...
@@ -165,7 +165,7 @@ STRICT_PRODUCTION=false
 RATE_LIMIT_BACKEND=memory
 ```
 
-知识库 / 嵌入（RAG 需要）：
+鐭ヨ瘑搴?/ 宓屽叆锛圧AG 闇€瑕侊級锛?
 
 ```env
 EMBEDDING_API_BASE=https://open.bigmodel.cn/api/paas/v4
@@ -173,7 +173,7 @@ EMBEDDING_API_KEY=...
 EMBEDDING_MODEL=embedding-3
 ```
 
-平台沙箱（可选，需本机 Docker 与镜像）：
+骞冲彴娌欑锛堝彲閫夛紝闇€鏈満 Docker 涓庨暅鍍忥級锛?
 
 ```env
 SANDBOX_ENABLED=true
@@ -184,43 +184,43 @@ SANDBOX_NETWORK_MODE=deny
 SANDBOX_APPROVAL=on-risky
 ```
 
-构建沙箱镜像示例：
+鏋勫缓娌欑闀滃儚绀轰緥锛?
 
 ```bash
 docker build -t nexora-sandbox:latest -f docker/sandbox/Dockerfile docker/sandbox
 ```
 
-启动 API（常用本机端口 **8020**，与 Electron 默认一致）：
+鍚姩 API锛堝父鐢ㄦ湰鏈虹鍙?**8020**锛屼笌 Electron 榛樿涓€鑷达級锛?
 
 ```bash
 python -m uvicorn api.server:app --reload --host 127.0.0.1 --port 8020
 ```
 
-健康检查：`http://127.0.0.1:8020/health`、`/health/ready`  
-OpenAPI（非生产且开启时）：`http://127.0.0.1:8020/docs`
+鍋ュ悍妫€鏌ワ細`http://127.0.0.1:8020/health`銆乣/health/ready`  
+OpenAPI锛堥潪鐢熶骇涓斿紑鍚椂锛夛細`http://127.0.0.1:8020/docs`
 
-### 2. 前端
+### 2. 鍓嶇
 
 ```bash
 cd frontend
 npm install
-# 可选：frontend/.env
+# 鍙€夛細frontend/.env
 # VITE_API_BASE=http://127.0.0.1:8020
 npm run dev
 ```
 
-浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。  
-登录后进入门户；对话 `#/chat`，测试工作台 `#/qa`。
+娴忚鍣ㄦ墦寮€ Vite 鎻愮ず鐨勫湴鍧€锛堥粯璁?`http://127.0.0.1:5173`锛夈€? 
+鐧诲綍鍚庤繘鍏ラ棬鎴凤紱瀵硅瘽 `#/chat`锛屾祴璇曞伐浣滃彴 `#/qa`銆?
 
-### 3. Electron 桌面（可选）
+### 3. Electron 妗岄潰锛堝彲閫夛級
 
 ```bash
 cd frontend
 npm run dev:desktop
 ```
 
-若本机 API 已手动启动，可用 `npm run dev:desktop:no-api`。  
-打包 Windows 安装包：`npm run dist`。
+鑻ユ湰鏈?API 宸叉墜鍔ㄥ惎鍔紝鍙敤 `npm run dev:desktop:no-api`銆? 
+鎵撳寘 Windows 瀹夎鍖咃細`npm run dist`銆?
 
 ### 4. CLI
 
@@ -230,97 +230,97 @@ python main.py
 
 ---
 
-## 对话 API 示例
+## 瀵硅瘽 API 绀轰緥
 
 ```bash
 curl -s http://127.0.0.1:8020/api/chat ^
   -H "Content-Type: application/json" ^
-  -d "{\"message\":\"你好\",\"mode\":\"chat\",\"session_id\":\"demo\"}"
+  -d "{\"message\":\"浣犲ソ\",\"mode\":\"chat\",\"session_id\":\"demo\"}"
 ```
 
-开启鉴权后需带 `Authorization: Bearer <token>`（先调登录接口）。  
-流式：`POST /api/chat/stream`（SSE）。
+寮€鍚壌鏉冨悗闇€甯?`Authorization: Bearer <token>`锛堝厛璋冪櫥褰曟帴鍙ｏ級銆? 
+娴佸紡锛歚POST /api/chat/stream`锛圫SE锛夈€?
 
-支持的 `mode`：`chat` | `rag` | `consult` | `graph-rag` | `agent` | `multi`。
+鏀寔鐨?`mode`锛歚chat` | `rag` | `consult` | `graph-rag` | `agent` | `multi`銆?
 
-其它主要前缀：
+鍏跺畠涓昏鍓嶇紑锛?
 
-| 前缀 | 说明 |
+| 鍓嶇紑 | 璇存槑 |
 |------|------|
-| `/api/qa/*` | 测试工作台项目 / 用例 / 运行 / 报告 |
-| `/api/sandbox/*` | 沙箱会话与执行（需启用配置） |
-| `/api/knowledge/*` | 知识库文档与建库 |
+| `/api/qa/*` | 娴嬭瘯宸ヤ綔鍙伴」鐩?/ 鐢ㄤ緥 / 杩愯 / 鎶ュ憡 |
+| `/api/sandbox/*` | 娌欑浼氳瘽涓庢墽琛岋紙闇€鍚敤閰嶇疆锛?|
+| `/api/knowledge/*` | 鐭ヨ瘑搴撴枃妗ｄ笌寤哄簱 |
 
 ---
 
-## 配置要点
+## 閰嶇疆瑕佺偣
 
-| 变量 | 含义 |
+| 鍙橀噺 | 鍚箟 |
 |------|------|
-| `DEEPSEEK_API_KEY` / `DEEPSEEK_API_BASE` | 默认聊天模型（OpenAI 兼容） |
-| `CURSOR_API_KEY` | 有密钥时，agent / 改代码类 chat 可走 Cursor |
-| `MEMORY_BACKEND` | `sqlite`（本地）或 `redis` |
-| `AUTH_ENABLED` / `AUTH_BACKEND` | 鉴权开关；`sqlite` 或 `mysql` |
-| `MCP_SERVERS_JSON` | 通用 MCP 服务器 JSON 数组；空则不拉外部 MCP |
-| `ACTIVE_TOOL_DISCOVERY` | Agent 主动发现工具（工具多时再开） |
-| `HYBRID_*` | 混合检索与路由器 |
-| `TAVILY_API_KEY` | `web_search` 工具 |
-| `SANDBOX_ENABLED` 等 | 平台沙箱（见 `.env.example`） |
+| `DEEPSEEK_API_KEY` / `DEEPSEEK_API_BASE` | 榛樿鑱婂ぉ妯″瀷锛圤penAI 鍏煎锛?|
+| `CURSOR_API_KEY` | 鏈夊瘑閽ユ椂锛宎gent / 鏀逛唬鐮佺被 chat 鍙蛋 Cursor |
+| `MEMORY_BACKEND` | `sqlite`锛堟湰鍦帮級鎴?`redis` |
+| `AUTH_ENABLED` / `AUTH_BACKEND` | 閴存潈寮€鍏筹紱`sqlite` 鎴?`mysql` |
+| `MCP_SERVERS_JSON` | 閫氱敤 MCP 鏈嶅姟鍣?JSON 鏁扮粍锛涚┖鍒欎笉鎷夊閮?MCP |
+| `ACTIVE_TOOL_DISCOVERY` | Agent 涓诲姩鍙戠幇宸ュ叿锛堝伐鍏峰鏃跺啀寮€锛?|
+| `HYBRID_*` | 娣峰悎妫€绱笌璺敱鍣?|
+| `TAVILY_API_KEY` | `web_search` 宸ュ叿 |
+| `SANDBOX_ENABLED` 绛?| 骞冲彴娌欑锛堣 `.env.example`锛?|
 
-完整模板：`.env.example`、生产：`.env.production.example`。
+瀹屾暣妯℃澘锛歚.env.example`銆佺敓浜э細`.env.production.example`銆?
 
-前端模型设置保存在本机浏览器；Key 留空时后端用服务端 `.env` 兜底。切换厂商时请同时改 **API Key + API Base + Model Name**。
+鍓嶇妯″瀷璁剧疆淇濆瓨鍦ㄦ湰鏈烘祻瑙堝櫒锛汯ey 鐣欑┖鏃跺悗绔敤鏈嶅姟绔?`.env` 鍏滃簳銆傚垏鎹㈠巶鍟嗘椂璇峰悓鏃舵敼 **API Key + API Base + Model Name**銆?
 
 ---
 
-## 测试
+## 娴嬭瘯
 
 ```bash
 python -m pytest tests/test_orchestration_smoke.py tests/test_orchestrator_matrix.py tests/test_orchestrator_stream.py tests/test_layering.py tests/test_use_cases_unit.py tests/test_tool_gateway.py tests/test_routing_policy.py tests/test_facade_helpers.py tests/test_chat_astream.py tests/test_qa_backend.py -q
 ```
 
-分层约定：`domain/`、`api/` 不得直接 `import langchain`（由测试闸门检查）。
+鍒嗗眰绾﹀畾锛歚domain/`銆乣api/` 涓嶅緱鐩存帴 `import langchain`锛堢敱娴嬭瘯闂搁棬妫€鏌ワ級銆?
 
-建议手工冒烟：门户进入对话 / 测试台 → 各 mode 发一轮 → QA 建项目跑用例 →（可选）沙箱高危命令审批。
+寤鸿鎵嬪伐鍐掔儫锛氶棬鎴疯繘鍏ュ璇?/ 娴嬭瘯鍙?鈫?鍚?mode 鍙戜竴杞?鈫?QA 寤洪」鐩窇鐢ㄤ緥 鈫掞紙鍙€夛級娌欑楂樺嵄鍛戒护瀹℃壒銆?
 
-DeepEval 评测（可选，需另装开发依赖）：见 `tests/power_test/`。
+DeepEval 璇勬祴锛堝彲閫夛紝闇€鍙﹁寮€鍙戜緷璧栵級锛氳 `tests/power_test/`銆?
 
 ---
 
-## 生产部署（摘要）
+## 鐢熶骇閮ㄧ讲锛堟憳瑕侊級
 
-推荐 Docker Compose（含 Redis、MySQL、API、Nginx）：
+鎺ㄨ崘 Docker Compose锛堝惈 Redis銆丮ySQL銆丄PI銆丯ginx锛夛細
 
 ```bash
-cp .env.production.example .env   # 填写密钥与管理员密码
+cp .env.production.example .env   # 濉啓瀵嗛挜涓庣鐞嗗憳瀵嗙爜
 docker compose up -d --build
 ```
 
-- 安全组只开 80/443，不要暴露 8020 / 6379 / 3306  
-- 生产：`AUTH_ENABLED=true`、`STRICT_PRODUCTION=true`、`OPENAPI_ENABLED=false`  
-- 详情与 GitHub Actions 自动部署：[deploy/README.md](deploy/README.md)
+- 瀹夊叏缁勫彧寮€ 80/443锛屼笉瑕佹毚闇?8020 / 6379 / 3306  
+- 鐢熶骇锛歚AUTH_ENABLED=true`銆乣STRICT_PRODUCTION=true`銆乣OPENAPI_ENABLED=false`  
+- 璇︽儏涓?GitHub Actions 鑷姩閮ㄧ讲锛歔deploy/README.md](deploy/README.md)
 
 ---
 
-## 技术栈
+## 鎶€鏈爤
 
-- **后端**：FastAPI、LangChain、LangGraph、Chroma、BM25、NetworkX、Redis/SQLite/MySQL、Docker 沙箱  
-- **前端**：React 18、Vite、TypeScript、Ant Design、Electron（可选）  
-- **工具**：Tavily 搜索、MCP（含 Playwright E2E / QA UI）、Cursor SDK（可选）
+- **鍚庣**锛欶astAPI銆丩angChain銆丩angGraph銆丆hroma銆丅M25銆丯etworkX銆丷edis/SQLite/MySQL銆丏ocker 娌欑  
+- **鍓嶇**锛歊eact 18銆乂ite銆乀ypeScript銆丄nt Design銆丒lectron锛堝彲閫夛級  
+- **宸ュ叿**锛歍avily 鎼滅储銆丮CP锛堝惈 Playwright E2E / QA UI锛夈€丆ursor SDK锛堝彲閫夛級
 
 ---
 
-## 多语言文档
+## 澶氳瑷€鏂囨。
 
-| 语言 | 文件 |
+| 璇█ | 鏂囦欢 |
 |------|------|
-| 中文（主文档） | [README.md](README.md) |
+| 涓枃锛堜富鏂囨。锛?| [README.md](README.md) |
 | English | [README_en.md](README_en.md) |
-| 日本語 | [README_ja.md](README_ja.md) |
-| 한국어 | [docs/i18n/README_ko.md](docs/i18n/README_ko.md) |
-| Español | [docs/i18n/README_es.md](docs/i18n/README_es.md) |
+| 鏃ユ湰瑾?| [README_ja.md](README_ja.md) |
+| 頃滉淡鞏?| [docs/i18n/README_ko.md](docs/i18n/README_ko.md) |
+| Espa帽ol | [docs/i18n/README_es.md](docs/i18n/README_es.md) |
 
-完整细节以中文主文档为准；其它语言为导读与快速开始摘要。
+瀹屾暣缁嗚妭浠ヤ腑鏂囦富鏂囨。涓哄噯锛涘叾瀹冭瑷€涓哄璇讳笌蹇€熷紑濮嬫憳瑕併€?
 
 ---
 
