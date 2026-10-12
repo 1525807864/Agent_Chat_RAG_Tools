@@ -6,6 +6,7 @@
  * ---------------------------------------------------------------------------
  */
 import type { QaCase, QaMember, QaMemberRole, QaProject, QaRun } from "../types/qa";
+import { nowBeijingIso } from "../utils/beijingTime";
 import {
   createSeedCases,
   createSeedProject,
@@ -81,7 +82,7 @@ export function storeCreateProject(input: {
     name: input.name.trim() || "未命名项目",
     baseUrl: input.baseUrl.trim(),
     goal: input.goal.trim(),
-    createdAt: new Date().toISOString(),
+    createdAt: nowBeijingIso(),
     sourceDocs: [],
   };
   data.projects.unshift(project);
@@ -183,7 +184,7 @@ export function storeRunSmoke(projectId: string): QaRun {
       ? `模拟 GET ${project.baseUrl} -> 200（前端壳，未请求真实网络）`
       : "未配置 Base URL，冒烟失败（请在项目设置中填写）",
     artifacts: { mocked: true, baseUrl: project.baseUrl },
-    createdAt: new Date().toISOString(),
+    createdAt: nowBeijingIso(),
   };
   const runs = data.runsByProject[projectId] || [];
   data.runsByProject[projectId] = [run, ...runs].slice(0, 50);

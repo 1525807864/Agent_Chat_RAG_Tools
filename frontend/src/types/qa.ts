@@ -101,3 +101,12 @@ export interface QaChatTurn {
   role: "user" | "assistant";
   text: string;
 }
+
+/** 右侧实时刷的一步 UI 测试 */
+export interface QaUiStep {
+  i: number;
+  action: string;
+  detail: string;
+  ok: boolean;
+  error?: string;
+}

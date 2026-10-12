@@ -15,7 +15,7 @@ import {
   SaveOutlined,
   SendOutlined,
 } from "@ant-design/icons";
-import type { QaChatTurn, QaProject, QaRun } from "../../types/qa";
+import type { QaChatTurn, QaProject, QaRun, QaUiStep } from "../../types/qa";
 
 type Props = {
   project: QaProject | null;
@@ -27,6 +27,8 @@ type Props = {
   onSend: (text: string) => void;
   onUpload: (file: File) => void;
   onSaveEnv: (patch: { name: string; baseUrl: string; goal: string }) => void;
+  uiSteps: QaUiStep[];
+  uiRunning: boolean;
 };
 
 export function QaAssistant({
@@ -39,6 +41,8 @@ export function QaAssistant({
   onSend,
   onUpload,
   onSaveEnv,
+  uiSteps,
+  uiRunning,
 }: Props) {
   const [text, setText] = useState("");
   const [baseUrl, setBaseUrl] = useState(project?.baseUrl || "");
@@ -54,6 +58,25 @@ export function QaAssistant({
     <aside className="qa-assistant">
       <div className="qa-assistant-chat">
         <div className="qa-pane-head">测试助手</div>
+        {(uiRunning || uiSteps.length > 0) && (
+          <div className="qa-ui-steps">
+            <div className="qa-pane-head">
+              {uiRunning ? "UI 测试进行中" : "最近 UI 步骤"}
+            </div>
+            {uiSteps.map((s) => (
+              <div
+                key={s.i}
+                className={`qa-ui-step ${s.ok ? "is-ok" : "is-fail"}`}
+              >
+                <strong>
+                  {s.i}. {s.action}
+                </strong>
+                <span>{s.ok ? "通过" : "失败"}</span>
+                <p>{s.error || s.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="qa-chat-log">
           {chat.length === 0 ? (
             <Typography.Paragraph type="secondary" className="qa-empty">

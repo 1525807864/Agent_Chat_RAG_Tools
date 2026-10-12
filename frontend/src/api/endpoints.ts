@@ -388,9 +388,9 @@ export function createQaProject(body: {name:string;base_url:string;goal:string})
 
 export function patchQaProject(
   projectId: string,
-  body: { base_url?: string;goal?:string}
-){
-  return apiJson<QaProject>(`/api/qa/projects/${projectId}`,{
+  body: { name?: string; base_url?: string; goal?: string },
+) {
+  return apiJson<QaProject>(`/api/qa/projects/${projectId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -464,6 +464,13 @@ export function patchQaMember(memberId: string, role: string) {
   );
 }
 
+/** DELETE 成员 */
+export function deleteQaMember(memberId: string) {
+  return apiJson<{ items: QaMember[] }>(`/api/qa/members/${memberId}`, {
+    method: "DELETE",
+  });
+}
+
 /** POST 测试助手 */
 export function postQaAssistant(
   projectId: string,
@@ -477,4 +484,131 @@ export function postQaAssistant(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/** 一步 UI 测试（与后端 SSE data JSON 对齐） */
+export type QaUiStreamEvent =
+  | {
+      type: "step";
+      i: number;
+      action: string;
+      detail: string;
+      ok: boolean;
+      error?: string;
+    }
+  | {
+      type: "done";
+      verdict: string;
+      summary: string;
+      run?: QaRun;
+    };
+
+/**
+ * POST /api/qa/projects/:id/runs/ui
+ * 读 SSE：每帧 data: {json}
+ */
+export async function streamQaUiRun(
+  projectId: string,
+  body: { name: string; base_url: string; goal?: string },
+  handlers: {
+    onStep?: (s: Extract<QaUiStreamEvent, { type: "step" }>) => void;
+    onDone?: (d: Extract<QaUiStreamEvent, { type: "done" }>) => void;
+    onError?: (msg: string) => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const path = `/api/qa/projects/${projectId}/runs/ui`;
+  const res = await fetch(`${getApiBase()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (handleUnauthorized(res, path)) {
+    handlers.onError?.("登录已失效，请重新登录");
+    return;
+  }
+  if (!res.ok || !res.body) {
+    const errText = await res.text().catch(() => res.statusText);
+    handlers.onError?.(errText || "UI 测试请求失败");
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  const flushBlock = (block: string) => {
+    const lines = block.split("\n");
+    const dataLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    if (!dataLines.length) return;
+    try {
+      const ev = JSON.parse(dataLines.join("\n")) as QaUiStreamEvent;
+      if (ev.type === "step") handlers.onStep?.(ev);
+      if (ev.type === "done") handlers.onDone?.(ev);
+    } catch {
+      // 半包或非 JSON，忽略
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const p of parts) flushBlock(p);
+    if (done) {
+      if (buffer.trim()) flushBlock(buffer);
+      break;
+    }
+  }
+}
+
+/**POST 项目资料 */
+export async function uploadQaSource(projectId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${getApiBase()}/api/qa/projects/${projectId}/sources`, 
+  {method: "POST", headers :{...authHeaders()}, body: form});
+  if (handleUnauthorized(res, `/api/qa/projects/${projectId}/sources`)) {
+    throw new Error("登录已失效，请重新登录");
+  }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(errText || "上传项目资料失败");
+  }
+  return res.json() as Promise<import("../types/api").QaProject>;
+}
+
+/** GET /api/qa/projects/:id/runs/:runId/export?fmt=xlsx|docx|pdf */
+export async function downloadQaRunExport(
+  projectId: string,
+  runId: string,
+  fmt: "xlsx" | "docx" | "pdf" = "xlsx",
+): Promise<void> {
+  const path = `/api/qa/projects/${projectId}/runs/${runId}/export?fmt=${fmt}`;
+  const res = await fetch(`${getApiBase()}${path}`, {
+    headers: { ...authHeaders() },
+  });
+  if (handleUnauthorized(res, path)) {
+    throw new Error("登录已失效，请重新登录");
+  }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(errText || "导出失败");
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${runId}.${fmt}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }

@@ -5,8 +5,9 @@
 import type { ReactNode } from "react";
 import { Alert, Button, Typography } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
-import { KnowledgePanel } from "./KnowledgePanel";
 import { useQaShell } from "../hooks/useQaShell";
+import { SandboxApprovalSheet } from "./sandbox/SandboxApprovalSheet";
+import "../styles/sandbox-approval.css";
 import { QaProjectList } from "./qa/QaProjectList";
 import { QaSideNav } from "./qa/QaSideNav";
 import { QaAssistant } from "./qa/QaAssistant";
@@ -15,18 +16,11 @@ import { QaCaseDetail } from "./qa/QaCaseDetail";
 import { QaRunsPage } from "./qa/QaRunsPage";
 import { QaReportPage } from "./qa/QaReportPage";
 import { QaMembersPage } from "./qa/QaMembersPage";
-import type { QaNav } from "../types/qa";
+import { QaKnowledgePage } from "./qa/QaKnowledgePage";
+
 
 export function QaWorkspace() {
   const shell = useQaShell();
-
-  const onNav = (nav: QaNav) => {
-    if (nav === "projects") {
-      shell.backToList();
-      return;
-    }
-    shell.setNav(nav);
-  };
 
   let center: ReactNode;
   if (shell.nav === "projects" || !shell.activeProject) {
@@ -34,7 +28,7 @@ export function QaWorkspace() {
       <QaProjectList
         projects={shell.projects}
         busy={shell.busy}
-        onOpen={shell.openProject}
+        onOpen={(id) => void shell.openProject(id)}
         onCreate={(name, baseUrl, goal) => {
           void shell.createProject(name, baseUrl, goal);
         }}
@@ -69,32 +63,49 @@ export function QaWorkspace() {
     center = (
       <QaRunsPage
         runs={shell.runs}
+        defaultUrl={shell.activeProject.baseUrl}
         busy={shell.busy}
+        uiRunning={shell.uiRunning}
         onSmoke={() => void shell.runSmoke()}
+        onUi={(name, url, goal) => void shell.runUi(name, url, goal)}
+        onExport={(runId, fmt) => void shell.exportRun(runId, fmt)}
       />
     );
   } else if (shell.nav === "report") {
-    center = <QaReportPage runs={shell.runs} cases={shell.cases} />;
+    center = (
+      <QaReportPage
+        runs={shell.runs}
+        cases={shell.cases}
+        projectName={shell.activeProject.name}
+      />
+    );
   } else if (shell.nav === "members") {
     center = (
       <QaMembersPage
         tenantId={shell.tenantId}
         members={shell.members}
-        onAdd={shell.addMember}
-        onRole={shell.setMemberRole}
+        onAdd={(name, role) => void shell.addMember(name, role)}
+        onRole={(id, role) => void shell.setMemberRole(id, role)}
+        onDelete={(id) => void shell.deleteMember(id)}
       />
     );
   } else {
     center = (
-      <div className="qa-pane qa-center-page">
-        <KnowledgePanel />
-      </div>
+      <QaKnowledgePage
+        project={shell.activeProject}
+        busy={shell.busy}
+        onUpload={(f) => void shell.addLocalSource(f)}
+      />
     );
   }
 
   return (
     <div className="qa-app">
-      <QaSideNav nav={shell.nav} tenantId={shell.tenantId} onChange={onNav} />
+      <QaSideNav
+        nav={shell.nav}
+        tenantId={shell.tenantId}
+        onChange={shell.setNav}
+      />
       <div className="qa-main">
         {shell.activeProject && shell.nav !== "projects" ? (
           <div className="qa-subhead">
@@ -130,7 +141,11 @@ export function QaWorkspace() {
         onSend={(text) => void shell.sendAssistant(text)}
         onUpload={(file) => void shell.addLocalSource(file)}
         onSaveEnv={(patch) => void shell.saveProject(patch)}
+        uiSteps={shell.uiSteps}
+        uiRunning={shell.uiRunning}
       />
+      {/* 全局沙箱高危确认：与侧栏/主区平级，勿再包一层 qa-app */}
+      <SandboxApprovalSheet />
     </div>
   );
 }

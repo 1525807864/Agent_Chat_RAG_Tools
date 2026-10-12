@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button, Input, Select, Space, Table, Typography } from "antd";
-import { UserAddOutlined } from "@ant-design/icons";
+import { DeleteOutlined, UserAddOutlined } from "@ant-design/icons";
 import type { QaMember, QaMemberRole } from "../../types/qa";
 
 const ROLES: QaMemberRole[] = ["admin", "execute", "view"];
@@ -15,11 +15,13 @@ export function QaMembersPage({
   members,
   onAdd,
   onRole,
+  onDelete,
 }: {
   tenantId: string;
   members: QaMember[];
   onAdd: (name: string, role: QaMemberRole) => void;
   onRole: (id: string, role: QaMemberRole) => void;
+  onDelete?: (id: string) => void;
 }) {
   const [name, setName] = useState("");
   return (
@@ -68,6 +70,25 @@ export function QaMembersPage({
               />
             ),
           },
+          ...(onDelete
+            ? [
+                {
+                  title: "操作",
+                  key: "actions",
+                  render: (_: unknown, row: QaMember) => (
+                    <Button
+                      type="text"
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={() => onDelete(row.id)}
+                    >
+                      移除
+                    </Button>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     </section>

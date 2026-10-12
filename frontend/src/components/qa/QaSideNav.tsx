@@ -1,5 +1,5 @@
 /**
- * 左侧产品导航。选中项青绿底，栏身深色。
+ * 左侧产品导航。选中项墨色底（主题色），栏身深色。
  */
 import type { ReactNode } from "react";
 import {

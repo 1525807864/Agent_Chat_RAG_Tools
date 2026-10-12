@@ -4,6 +4,7 @@
  * 纯前端演示用；接后端后可删掉 createSeed*。
  */
 import type { QaCase, QaProject, QaSourceDoc } from "../types/qa";
+import { nowBeijingIso } from "../utils/beijingTime";
 
 /** 生成短 id（浏览器端够用） */
 export function qaId(prefix = "qa"): string {
@@ -59,7 +60,7 @@ export function createSeedProject(): QaProject {
     name: "测试项生成示例项目",
     baseUrl: "https://www.example.com",
     goal: "围绕初始化与接口探活生成可确认的测试内容树",
-    createdAt: new Date().toISOString(),
+    createdAt: nowBeijingIso(),
     sourceDocs: createSeedSources(),
   };
 }
