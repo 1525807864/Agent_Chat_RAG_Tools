@@ -62,3 +62,17 @@ data/knowledge_graph.json
 data/workspace/
 data/memdir/
 data/tenants/
+
+# QA tenant projects / cases / runs (local runtime)
+data/qa/
+
+# semantic memory jsonl (local session artifacts)
+data/memory_semantic/
+
+# local Playwright install under data/e2e (if present)
+data/e2e/node_modules/
+
+# --- local automation / debug artifacts (never commit) ---
+.playwright-mcp/
+/baidu-*.png
+/draggable-*.png
