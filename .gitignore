@@ -66,6 +66,16 @@ data/tenants/
 # QA tenant projects / cases / runs (local runtime)
 data/qa/
 
+# Ops 终端审计、沙箱会话本地数据
+data/ops/
+data/sandbox/
+
+# 本机 ttyd 二进制与临时诊断脚本（勿提交）
+tools/ttyd.exe
+tools/ttyd
+tools/_diag_*.py
+tools/_last_*.txt
+
 # semantic memory jsonl (local session artifacts)
 data/memory_semantic/
 
