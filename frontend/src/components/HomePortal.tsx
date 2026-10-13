@@ -22,7 +22,6 @@ import {
   SearchOutlined,
   StarOutlined,
 } from "@ant-design/icons";
-import { NexoraLogo } from "./NexoraLogo";
 import {
   DOMAINS,
   DOMAIN_FILTERS,
@@ -36,7 +35,7 @@ import "../styles/portal.css";
 
 type Props = {
   /** 进入已上线工作台 */
-  onEnter: (workspace: "chat" | "qa") => void;
+  onEnter: (workspace: "chat" | "qa" | "ops") => void;
   /** 顶栏「新建对话」：进 chat 并开新会话 */
   onNewChat?: () => void;
   /** 侧栏底部用户名 */

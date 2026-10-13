@@ -1,7 +1,7 @@
 // ============================================================================
 // domains.ts：门户首页的「领域 / 垂直 Agent」清单（配置驱动）
 // - status: "ready" 可进入已有工作台；"soon" 只展示「即将开放」
-// - workspace: 对应 App 里的工作区标识（目前只有 chat / qa）
+// - workspace: 对应 App 里的工作区标识（chat / qa / ops）
 // ============================================================================
 
 /** 侧栏 / 筛选用的分组 id */
@@ -22,7 +22,7 @@ export type DomainItem = {
   description: string; // 两行简介
   tags: string[]; // 底部小标签
   status: "ready" | "soon"; // ready=可进；soon=占位
-  workspace?: "chat" | "qa"; // ready 时跳转的工作区；soon 可省略
+  workspace?: "chat" | "qa" | "ops"; // ready 时跳转的工作区；soon 可省略
   filters: DomainFilterId[]; // 出现在哪些筛选 pill 下（不含 all）
   badge?: number; // 侧栏可选数字徽章；没有就不显示
 };
@@ -81,14 +81,16 @@ export const DOMAINS: DomainItem[] = [
     filters: ["rd"], // 筛选
   },
   {
-    id: "ops", // 运维排障（占位）
+    id: "ops", // 运维排障
     name: "运维排障", // 标题
     group: "ops", // 运维与数据
-    subtitle: "告警 · 根因 · 自愈", // 副标
-    description: "告警降噪、根因分析与处置建议（即将开放）。", // 简介
-    tags: ["告警", "根因"], // 标签
-    status: "soon", // 占位
+    subtitle: "告警 · 根因 · Holmes", // 副标
+    description: "接入 HolmesGPT：自然语言调查集群与可观测数据。", // 简介
+    tags: ["Holmes", "告警", "根因"], // 标签
+    status: "ready", // 已对接 OpsWorkspace
+    workspace: "ops", // 进入运维工作台
     filters: ["ops"], // 运维筛选
+    badge: 1,
   },
   {
     id: "data", // 数据分析（占位）

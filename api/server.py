@@ -43,7 +43,8 @@ from api.auth.user_store import init_user_store
 from api.deps import init_agent_app, shutdown_agent_app
 from api.exception_handlers import register_exception_handlers
 from fastapi import Response, status
-
+from api.routes import ops as ops_routes  # 运维排障门面（Holmes）
+from api.routes import ops_terminal as ops_terminal_routes  # 交互终端（ttyd）
 from api.health_checks import critical_ok, run_readiness_checks_async
 from api.health_state import DependencyCheck, health_state
 from api.middleware import (
@@ -127,6 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         import asyncio
 
         reaper_task: asyncio.Task | None = None
+        ttyd_reaper_task: asyncio.Task | None = None
         try:
             from infrastructure.sandbox.reaper import sweep_and_reap_forever
 
@@ -136,15 +138,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:  # noqa: BLE001
             reaper_task = None
 
+        # Ops 交互终端：回收过期 / 已死的 ttyd 进程
+        try:
+            from application.ops.ttyd_manager import get_ttyd_manager
+
+            async def _ttyd_reap_forever() -> None:
+                while True:
+                    try:
+                        n = await get_ttyd_manager().reap_expired()
+                        if n:
+                            import logging
+
+                            logging.getLogger("nexora.ops.ttyd").info(
+                                "reaped %s terminals", n
+                            )
+                    except Exception:  # noqa: BLE001
+                        import logging
+
+                        logging.getLogger("nexora.ops.ttyd").exception(
+                            "ttyd reap failed"
+                        )
+                    await asyncio.sleep(30)
+
+            ttyd_reaper_task = asyncio.create_task(
+                _ttyd_reap_forever(), name="ttyd-reaper"
+            )
+        except Exception:  # noqa: BLE001
+            ttyd_reaper_task = None
+
         try:
             yield
         finally:
-            if reaper_task is not None:
-                reaper_task.cancel()
-                try:
-                    await reaper_task
-                except asyncio.CancelledError:
-                    pass
+            for task in (ttyd_reaper_task, reaper_task):
+                if task is not None:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
             health_state.mark_not_ready()
             await shutdown_http_rate_limiter()
             await shutdown_agent_app()
@@ -215,7 +246,8 @@ app.include_router(billing_routes.router)
 app.include_router(download_routes.router)
 app.include_router(qa_routes.router)
 app.include_router(sandbox_routes.router)
-
+app.include_router(ops_routes.router)
+app.include_router(ops_terminal_routes.router)
 @app.get("/health/live", response_model=LiveHealthResponse, tags=["system"])
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health_live() -> LiveHealthResponse:

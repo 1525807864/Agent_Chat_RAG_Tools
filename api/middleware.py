@@ -41,7 +41,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "DENY")
+        # Ops 终端 iframe 必须能被嵌入；全局 DENY 会导致浏览器显示「禁止」页
+        # MutableHeaders 无 pop()，只能 del / setdefault
+        path = request.url.path or ""
+        if path.startswith("/api/ops/terminal/proxy"):
+            if "x-frame-options" in response.headers:
+                del response.headers["x-frame-options"]
+        else:
+            response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault(
             "Permissions-Policy", "camera=(), microphone=(), geolocation=()"

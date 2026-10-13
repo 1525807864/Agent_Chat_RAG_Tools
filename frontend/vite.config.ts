@@ -1,6 +1,7 @@
 /**
  * Vite 配置
  * - 开发：port 5173，与后端 CORS 白名单对齐
+ * - /api 反代到 8020（含 WebSocket），终端 iframe 可走同源相对路径
  * - 打包：base 必须是 "./"，否则 Electron 用 loadFile 加载 dist 时 CSS/JS 路径会 404
  */
 import { defineConfig } from "vite";
@@ -14,6 +15,13 @@ export default defineConfig({
     port: 5173,
     host: "127.0.0.1",
     cors: true,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8020",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   build: {
     outDir: "dist",

@@ -4,10 +4,12 @@
  * workspace=home：AgentHub 式领域门户（默认）
  * workspace=chat：原会话 / 聊天 / 设置
  * workspace=qa：测试工作台
+ * workspace=ops：运维排障（HolmesGPT）
  */
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Space, Tag, Tooltip } from "antd";
 import {
+  CloudServerOutlined,
   CommentOutlined,
   DownloadOutlined,
   ExperimentOutlined,
@@ -16,6 +18,7 @@ import {
   MessageOutlined,
 } from "@ant-design/icons";
 import { HomePortal } from "./components/HomePortal";
+import { OpsWorkspace } from "./components/ops/OpsWorkspace";
 import { QaWorkspace } from "./components/QaWorkspace";
 import {
   desktopDownloadUrl,
@@ -67,13 +70,16 @@ export default function App() {
   const [downloadReady, setDownloadReady] = useState(false);
   const [downloadDetail, setDownloadDetail] = useState("正在检查安装包…");
 
-  // home=门户；chat=对话；qa=测试工作台；hash 刷新后仍停在对应页
-  const [workspace, setWorkspace] = useState<"home" | "chat" | "qa">(() => {
-    const h = window.location.hash;
-    if (h === "#/qa") return "qa";
-    if (h === "#/chat") return "chat";
-    return "home";
-  });
+  // home=门户；chat=对话；qa=测试；ops=运维；hash 刷新后仍停在对应页
+  const [workspace, setWorkspace] = useState<"home" | "chat" | "qa" | "ops">(
+    () => {
+      const h = window.location.hash;
+      if (h === "#/qa") return "qa";
+      if (h === "#/ops") return "ops";
+      if (h === "#/chat") return "chat";
+      return "home";
+    },
+  );
 
   const { settings, draft, setDraft, save, clear, savedHint } = useLlmSettings();
 
@@ -140,6 +146,7 @@ export default function App() {
 
   useEffect(() => {
     if (workspace === "qa") window.location.hash = "/qa";
+    else if (workspace === "ops") window.location.hash = "/ops";
     else if (workspace === "chat") window.location.hash = "/chat";
     else window.location.hash = "/";
   }, [workspace]);
@@ -326,6 +333,24 @@ export default function App() {
             </Button>
           ) : null}
 
+          {workspace === "chat" || workspace === "ops" ? (
+            <Button
+              type={workspace === "ops" ? "primary" : "default"}
+              icon={
+                workspace === "ops" ? (
+                  <MessageOutlined />
+                ) : (
+                  <CloudServerOutlined />
+                )
+              }
+              onClick={() =>
+                setWorkspace(workspace === "ops" ? "chat" : "ops")
+              }
+            >
+              {workspace === "ops" ? "返回对话" : "运维排障"}
+            </Button>
+          ) : null}
+
           {!inElectron &&
             (downloadReady ? (
               <Button
@@ -376,6 +401,8 @@ export default function App() {
         />
       ) : workspace === "qa" ? (
         <QaWorkspace />
+      ) : workspace === "ops" ? (
+        <OpsWorkspace />
       ) : (
         /*
           三栏网格；sidebar-collapsed 时左列宽度为 0
