@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks: [internal]
+
   mysql:
     image: mysql:8.0
     restart: unless-stopped
@@ -23,6 +24,49 @@ services:
       retries: 30
       start_period: 20s
     networks: [internal]
+
+  # ===== 新增：Holmes 常驻 sidecar（不对公网暴露端口）=====
+  holmes:
+    # 方案 A：用官方镜像（推荐先试）
+    image: ${HOLMES_IMAGE:-robustadev/holmes:latest}
+    # 方案 B：改成本地构建时，注释掉 image，打开下面 build：
+    # build:
+    #   context: ./third_party/holmesgpt
+    #   dockerfile: Dockerfile
+    # image: nexora-holmes:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # 与 Nexora 共用 DeepSeek；按你本机已跑通的变量对齐
+      OPENAI_API_KEY: ${DEEPSEEK_API_KEY}
+      OPENAI_API_BASE: ${DEEPSEEK_API_BASE:-https://api.deepseek.com/v1}
+      # 若 Holmes 进程要开鉴权，与 HOLMES_API_KEY 保持一致
+      HOLMES_API_KEY: ${HOLMES_API_KEY:-}
+      # 模型名按你 holmes 配置；没有 modelList 时可直接 openai/deepseek-*
+      MODEL: ${HOLMES_DEFAULT_MODEL:-deepseek}
+    # 官方镜像默认 ENTRYPOINT 是 CLI；覆盖成 HTTP 服务（端口以你镜像为准）
+    # 若 robustadev/holmes 的启动方式不同，改成镜像文档里的 serve 命令
+    command: ["python", "server.py"]
+    # 不映射到宿主机，只给 api 内网访问
+    expose:
+      - "5050"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5050/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks: [internal]
+
+  # ===== 新增：只构建沙箱镜像，不常驻 =====
+  # update.sh 里：docker compose build sandbox-image
+  sandbox-image:
+    build:
+      context: ./docker/sandbox
+      dockerfile: Dockerfile
+    image: nexora-sandbox:latest
+    profiles: ["build"]   # 默认 up 不会起这个空容器
+
   api:
     build:
       context: .
@@ -42,15 +86,38 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-langchain_demo}
       DESKTOP_RELEASE_DIR: /app/downloads
       DESKTOP_RELEASE_NAME: Nexora-Setup.exe
+
+      # --- 生产覆盖：指向 compose 内网 Holmes ---
+      HOLMES_ENABLED: "true"
+      HOLMES_API_BASE: http://holmes:5050
+
+      # --- 生产覆盖：沙箱 ---
+      SANDBOX_ENABLED: "true"
+      SANDBOX_RUNTIME: docker
+      SANDBOX_IMAGE: nexora-sandbox:latest
+      # ★ 必须是宿主机绝对路径（docker.sock 场景）
+      SANDBOX_WORKSPACE_HOST: ${SANDBOX_WORKSPACE_HOST:-/opt/LangChain_Demo/data/sandbox}
+
+      # --- 交互终端（可选；API 镜像需装 ttyd）---
+      OPS_TTYD_ENABLED: ${OPS_TTYD_ENABLED:-true}
+      OPS_TTYD_BIN: ttyd
+      OPS_TTYD_BIND: 127.0.0.1
+      OPS_TTYD_ALLOWED_ORIGINS: ${OPS_TTYD_ALLOWED_ORIGINS:-https://www.lspagent.online}
+
     volumes:
       - app_data:/app/data
-      # 安装包不打进镜像。把 Nexora-Setup.exe 放到仓库 downloads/ 后重启 api
       - ./downloads:/app/downloads:ro
+      # 沙箱工作区：容器内路径与宿主机同一目录树，便于 docker run -v
+      - ${SANDBOX_WORKSPACE_HOST:-/opt/LangChain_Demo/data/sandbox}:${SANDBOX_WORKSPACE_HOST:-/opt/LangChain_Demo/data/sandbox}
+      # 让 api 能 docker run / docker exec 沙箱（权限很大，仅生产运维机）
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       redis:
         condition: service_started
       mysql:
         condition: service_healthy
+      holmes:
+        condition: service_started
     networks: [internal]
 
   nginx:

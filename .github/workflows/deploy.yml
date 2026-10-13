@@ -19,7 +19,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 600
     steps:
       - name: SSH deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -28,6 +28,6 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script_stop: true
-          command_timeout: 35m
+          command_timeout: 120m
           script: |
             bash /opt/LangChain_Demo/deploy/update.sh
