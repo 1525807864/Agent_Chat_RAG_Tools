@@ -5,12 +5,20 @@
 - 非交互：docker exec + argv；默认禁止 bash -lc。
 - 资源 / cap-drop / 只读根 / no-new-privileges。
 - 网络：deny→none；allowlist/open→bridge + HTTP_PROXY 指向宿主机 egress。
+
+Windows 注意
+============
+uvicorn 在 Windows 上常用 SelectorEventLoop，不支持
+``asyncio.create_subprocess_exec``（会 NotImplementedError）。
+因此 docker CLI 一律走 ``asyncio.to_thread(subprocess.run/Popen)``。
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import time
 from pathlib import Path
 
 from infrastructure.sandbox.models import (
@@ -22,6 +30,17 @@ from infrastructure.sandbox.models import (
 from infrastructure.sandbox.runtime import SandboxRuntime
 
 _log = logging.getLogger(__name__)
+
+
+def _run_docker(args: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
+    """在工作线程里跑 docker，兼容 Windows SelectorEventLoop。"""
+    return subprocess.run(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
+    )
 
 
 class DockerSandboxRuntime(SandboxRuntime):
@@ -93,16 +112,17 @@ class DockerSandboxRuntime(SandboxRuntime):
             ]
         args.append(self._image)
 
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await proc.communicate()
-        if proc.returncode != 0:
-            msg = (err or out).decode("utf-8", "replace")[:400]
+        try:
+            completed = await asyncio.to_thread(_run_docker, args, timeout=120.0)
+        except FileNotFoundError as exc:
+            raise RuntimeError("找不到 docker 命令，请确认 Docker Desktop 已安装并在 PATH 中") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("docker run 超时") from exc
+
+        if completed.returncode != 0:
+            msg = (completed.stderr or completed.stdout).decode("utf-8", "replace")[:400]
             raise RuntimeError(f"无法创建沙箱: {msg}")
-        cid = (out.decode("utf-8", "replace") or name).strip()
+        cid = (completed.stdout.decode("utf-8", "replace") or name).strip()
         _log.info(
             "sandbox.docker.create name=%s tenant=%s net=%s proxy=%s",
             name,
@@ -163,26 +183,26 @@ class DockerSandboxRuntime(SandboxRuntime):
             name,
             *inner,
         ]
-        t0 = asyncio.get_running_loop().time()
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        t0 = time.perf_counter()
         timed_out = False
         try:
-            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            code = int(proc.returncode or 0)
-        except asyncio.TimeoutError:
+            completed = await asyncio.to_thread(
+                _run_docker, args, timeout=float(timeout)
+            )
+            out_b, err_b = completed.stdout or b"", completed.stderr or b""
+            code = int(completed.returncode or 0)
+        except subprocess.TimeoutExpired as exc:
             timed_out = True
-            proc.kill()
-            out_b, err_b = await proc.communicate()
+            out_b = exc.stdout or b""
+            err_b = exc.stderr or b""
             code = 124
+        except FileNotFoundError as exc:
+            raise RuntimeError("找不到 docker 命令") from exc
 
         max_n = session.limits.max_output_bytes
         stdout, t1 = _clip(out_b, max_n)
         stderr, t2 = _clip(err_b, max_n)
-        ms = int((asyncio.get_running_loop().time() - t0) * 1000)
+        ms = int((time.perf_counter() - t0) * 1000)
         return ExecResult(
             ok=code == 0 and not timed_out,
             exit_code=code,
@@ -195,15 +215,12 @@ class DockerSandboxRuntime(SandboxRuntime):
 
     async def destroy(self, session: SandboxSession) -> None:
         name = self._container_name(session.id)
-        proc = await asyncio.create_subprocess_exec(
-            "docker",
-            "rm",
-            "-f",
-            name,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+        try:
+            await asyncio.to_thread(
+                _run_docker, ["docker", "rm", "-f", name], timeout=60.0
+            )
+        except Exception:  # noqa: BLE001
+            _log.debug("sandbox.docker.destroy failed name=%s", name, exc_info=True)
 
 
 def _safe_cwd(cwd: str) -> str:

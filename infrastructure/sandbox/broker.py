@@ -84,18 +84,21 @@ class SandboxBroker:
             raise AppError(ErrorCode.VALIDATION, str(exc), http_status=400) from exc
 
         policy = build_policy_snapshot()
-        async with self._lock:
-            alive = [
-                s
-                for s in self._sessions.values()
-                if s.tenant_id == tenant and s.status == "running"
-            ]
-        if len(alive) >= get_settings().sandbox_max_sessions_per_tenant:
-            raise AppError(
-                ErrorCode.SANDBOX_DENIED,
-                "超过租户沙箱并发上限",
-                http_status=429,
-            )
+        # 0 = 不限制并发（本地调试用）
+        max_sess = int(get_settings().sandbox_max_sessions_per_tenant)
+        if max_sess > 0:
+            async with self._lock:
+                alive = [
+                    s
+                    for s in self._sessions.values()
+                    if s.tenant_id == tenant and s.status == "running"
+                ]
+            if len(alive) >= max_sess:
+                raise AppError(
+                    ErrorCode.SANDBOX_DENIED,
+                    "超过租户沙箱并发上限",
+                    http_status=429,
+                )
 
         sid = uuid4().hex[:12]
         ws = (
@@ -125,6 +128,16 @@ class SandboxBroker:
                 proxy_url=proxy_url,
             )
         except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("nexora.sandbox").exception(
+                "sandbox.create failed session=%s tenant=%s image=%s ws=%s err=%s",
+                sid,
+                tenant,
+                get_settings().sandbox_image,
+                ws,
+                exc,
+            )
             raise AppError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 "沙箱启动失败，请确认 Docker 与镜像已就绪",
@@ -193,6 +206,13 @@ class SandboxBroker:
 
     async def release(self, *, session_id: str, tenant_id: str) -> None:
         sess = await self._get_owned(session_id, tenant_id)
+        # P4：先关掉挂在该沙箱上的 ttyd，再毁容器
+        try:
+            from application.ops.ttyd_manager import get_ttyd_manager
+
+            await get_ttyd_manager().close_by_sandbox(session_id)
+        except Exception:  # noqa: BLE001
+            pass
         await self._rt.destroy(sess)
         sess.status = "released"
         async with self._lock:

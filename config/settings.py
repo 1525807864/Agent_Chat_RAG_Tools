@@ -363,16 +363,123 @@ class Settings(BaseSettings):
         alias="SANDBOX_APPROVAL",
         description="never | on-risky | always",
     )
+    # 0 = 不限制；生产建议设 3～10
     sandbox_max_sessions_per_tenant: int = Field(
         default=3,
-        ge=1,
-        le=50,
+        ge=0,
+        le=200,
         alias="SANDBOX_MAX_SESSIONS_PER_TENANT",
     )
     sandbox_allow_shell_string: bool = Field(
         default=False,
         alias="SANDBOX_ALLOW_SHELL_STRING",
         description="是否允许bash -lc 字符串（含管道符）：默认false，强制argv",
+    )
+
+    # HolmesGPT 运维引擎（旁路 HTTP，不 import holmes 源码）
+    holmes_enabled: bool = Field(
+        default=False,
+        alias="HOLMES_ENABLED",
+        description="是否启用运维排障门面（转发到 Holmes /api/chat）",
+    )
+    holmes_api_base: str = Field(
+        default="http://127.0.0.1:5050",
+        alias="HOLMES_API_BASE",
+        description="Holmes HTTP 根地址，不要带尾斜杠",
+    )
+    # 若 Holmes 进程设置了 HOLMES_API_KEY，这里填同一把；空=不传鉴权头
+    holmes_api_key: str = Field(
+        default="",
+        alias="HOLMES_API_KEY",
+        description="调用 Holmes 时的 X-API-Key / Bearer",
+    )
+    # 对应 Holmes modelList 键名（如 deepseek），或 openai/deepseek-chat
+    holmes_default_model: str = Field(
+        default="deepseek",
+        alias="HOLMES_DEFAULT_MODEL",
+        description="转发给 Holmes 的 model 字段",
+    )
+    # 单次调查可能很久（拉日志/指标），超时要够大
+    holmes_timeout_sec: float = Field(
+        default=300.0,
+        ge=30.0,
+        le=3600.0,
+        alias="HOLMES_TIMEOUT_SEC",
+        description="调用 Holmes /api/chat 的超时秒数",
+    )
+
+    # ======= Ops 交互终端 (ttyd) ========
+    # 总开关: false 时 /api/ops/terminal/* 一律 503
+    ops_ttyd_enabled: bool = Field(
+        default=False,
+        alias="OPS_TTYD_ENABLED",
+        description="是否启用 Ops 交互终端（ttyd）",
+    )
+    # ttyd 可执行文件路径；PATH 里有则写 ttyd 即可
+    ops_ttyd_bin: str = Field(
+        default="ttyd",
+        alias="OPS_TTYD_BIN",
+        description="ttyd 二进制路径",
+    )
+    # 只绑本机，禁止公网直连 ttyd
+    ops_ttyd_bind: str = Field(
+        default="127.0.0.1",
+        alias="OPS_TTYD_BIND",
+        description="ttyd 监听地址，必须是 127.0.0.1",
+    )
+    ops_ttyd_port_min: int = Field(
+        default=9100, ge=1024, le=65000, alias="OPS_TTYD_PORT_MIN"
+    )
+    ops_ttyd_port_max: int = Field(
+        default=9199, ge=1024, le=65000, alias="OPS_TTYD_PORT_MAX"
+    )
+    # ticket 有效期（秒）；过期需重新 POST sessions
+    ops_ttyd_ticket_ttl_sec: int = Field(
+        default=600, ge=60, le=3600, alias="OPS_TTYD_TICKET_TTL_SEC"
+    )
+    # 沙箱容器内启动的 shell
+    ops_ttyd_shell: str = Field(
+        default="/bin/bash",
+        alias="OPS_TTYD_SHELL",
+    )
+    # 同一用户同时最多几个交互终端；0 = 不限制
+    ops_ttyd_max_per_user: int = Field(
+        default=1, ge=0, le=32, alias="OPS_TTYD_MAX_PER_USER"
+    )
+    # 逗号分隔 Origin（文档/校验用）；ttyd 的 -O 是布尔开关，不接收列表参数
+    ops_ttyd_allowed_origins: str = Field(
+        default="http://127.0.0.1:5173,http://localhost:5173",
+        alias="OPS_TTYD_ALLOWED_ORIGINS",
+    )
+    # P3：禁止开「可写」终端的 user_id 列表（逗号分隔）；只读不受影响
+    ops_ttyd_deny_users: str = Field(
+        default="",
+        alias="OPS_TTYD_DENY_USERS",
+        description="禁止可写交互终端的用户 id，逗号分隔",
+    )
+    # P4：用 script 录制终端 typescript 到 /workspace/.nexora/
+    ops_ttyd_recording_enabled: bool = Field(
+        default=True,
+        alias="OPS_TTYD_RECORDING_ENABLED",
+        description="是否用 script 录制交互终端会话",
+    )
+    # native=本机直接跑 ttyd；wsl=经 wsl.exe 在 Linux 里跑（Windows 开发机想打字就用这个）
+    ops_ttyd_runtime: str = Field(
+        default="native",
+        alias="OPS_TTYD_RUNTIME",
+        description="ttyd 怎么起：native 或 wsl",
+    )
+    # 填 wsl -l -v 里那一列名字；空着就用默认发行版
+    ops_ttyd_wsl_distro: str = Field(
+        default="",
+        alias="OPS_TTYD_WSL_DISTRO",
+        description="WSL 发行版名，空=默认",
+    )
+    # 一般写 wsl 就行，PATH 里有
+    ops_ttyd_wsl_exe: str = Field(
+        default="wsl",
+        alias="OPS_TTYD_WSL_EXE",
+        description="wsl.exe 路径",
     )
     #搜索配置
     tavily_api_key:str = Field(
