@@ -25,6 +25,8 @@ type Props = {
   project: QaProject;
   selected: QaCase | null;
   busy: boolean;
+  /** admin 才能确认 / 删除 / 生成 */
+  canWrite?: boolean;
   onConfirm: (fused: string) => void;
   onGenerate: () => void;
   onDelete: (id: string) => void;
@@ -34,6 +36,7 @@ export function QaCaseDetail({
   project,
   selected,
   busy,
+  canWrite = true,
   onConfirm,
   onGenerate,
   onDelete,
@@ -72,31 +75,33 @@ export function QaCaseDetail({
             {selected.title}
           </Typography.Title>
         </div>
-        <Space wrap>
-          <Button
-            icon={<CheckOutlined />}
-            disabled={busy}
-            onClick={() => onConfirm(fused)}
-          >
-            确认
-          </Button>
-          <Button
-            danger
-            icon={<DeleteOutlined />}
-            disabled={busy}
-            onClick={() => onDelete(selected.id)}
-          >
-            删除
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            disabled={busy}
-            onClick={onGenerate}
-          >
-            生成测试项
-          </Button>
-        </Space>
+        {canWrite ? (
+          <Space wrap>
+            <Button
+              icon={<CheckOutlined />}
+              disabled={busy}
+              onClick={() => onConfirm(fused)}
+            >
+              确认
+            </Button>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              disabled={busy}
+              onClick={() => onDelete(selected.id)}
+            >
+              删除
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              disabled={busy}
+              onClick={onGenerate}
+            >
+              生成测试项
+            </Button>
+          </Space>
+        ) : null}
       </div>
 
       <Typography.Text type="secondary" className="qa-section-label">
@@ -142,6 +147,7 @@ export function QaCaseDetail({
         value={fused}
         onChange={(e) => setFused(e.target.value)}
         rows={6}
+        readOnly={!canWrite}
       />
 
       <Typography.Text type="secondary" className="qa-section-label">

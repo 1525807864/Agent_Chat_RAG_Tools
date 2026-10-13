@@ -1,6 +1,7 @@
 /**
  * 测试平台壳：左导航 + 中间页 + 右侧助手。
  * 未选项目时中间是项目列表；选中后可切到用例 / 记录 / 报告。
+ * 按钮按 /api/qa/me 返回的 permissions 禁用（安全边界仍在后端）。
  */
 import type { ReactNode } from "react";
 import { Alert, Button, Typography } from "antd";
@@ -21,6 +22,7 @@ import { QaKnowledgePage } from "./qa/QaKnowledgePage";
 
 export function QaWorkspace() {
   const shell = useQaShell();
+  const perms = shell.permissions;
 
   let center: ReactNode;
   if (shell.nav === "projects" || !shell.activeProject) {
@@ -28,6 +30,7 @@ export function QaWorkspace() {
       <QaProjectList
         projects={shell.projects}
         busy={shell.busy}
+        canWrite={perms.canWriteProject}
         onOpen={(id) => void shell.openProject(id)}
         onCreate={(name, baseUrl, goal) => {
           void shell.createProject(name, baseUrl, goal);
@@ -48,11 +51,13 @@ export function QaWorkspace() {
           onGenerate={() => void shell.generateCases()}
           onDelete={(id) => void shell.deleteCase(id)}
           busy={shell.busy}
+          canWrite={perms.canWriteCase}
         />
         <QaCaseDetail
           project={shell.activeProject}
           selected={shell.selectedCase}
           busy={shell.busy}
+          canWrite={perms.canWriteCase}
           onConfirm={(fused) => void shell.confirmCase(fused)}
           onGenerate={() => void shell.generateCases()}
           onDelete={(id) => void shell.deleteCase(id)}
@@ -66,6 +71,7 @@ export function QaWorkspace() {
         defaultUrl={shell.activeProject.baseUrl}
         busy={shell.busy}
         uiRunning={shell.uiRunning}
+        canExecute={perms.canExecute}
         onSmoke={() => void shell.runSmoke()}
         onUi={(name, url, goal) => void shell.runUi(name, url, goal)}
         onExport={(runId, fmt) => void shell.exportRun(runId, fmt)}
@@ -84,7 +90,8 @@ export function QaWorkspace() {
       <QaMembersPage
         tenantId={shell.tenantId}
         members={shell.members}
-        onAdd={(name, role) => void shell.addMember(name, role)}
+        canManage={perms.canManageMembers}
+        onInvite={(body) => void shell.inviteMember(body)}
         onRole={(id, role) => void shell.setMemberRole(id, role)}
         onDelete={(id) => void shell.deleteMember(id)}
       />
@@ -94,6 +101,7 @@ export function QaWorkspace() {
       <QaKnowledgePage
         project={shell.activeProject}
         busy={shell.busy}
+        canWrite={perms.canWriteProject}
         onUpload={(f) => void shell.addLocalSource(f)}
       />
     );
@@ -137,6 +145,8 @@ export function QaWorkspace() {
         runs={shell.runs}
         busy={shell.busy}
         materialsOpen={shell.materialsOpen}
+        canWriteCase={perms.canWriteCase}
+        canWriteProject={perms.canWriteProject}
         onToggleMaterials={() => shell.setMaterialsOpen(!shell.materialsOpen)}
         onSend={(text) => void shell.sendAssistant(text)}
         onUpload={(file) => void shell.addLocalSource(file)}

@@ -22,6 +22,8 @@ type Props = {
   onGenerate: () => void;
   onDelete: (id: string) => void;
   busy: boolean;
+  /** admin 才能生成 / 删除用例 */
+  canWrite?: boolean;
 };
 
 export function QaCaseTree({
@@ -33,6 +35,7 @@ export function QaCaseTree({
   onGenerate,
   onDelete,
   busy,
+  canWrite = true,
 }: Props) {
   const q = query.trim().toLowerCase();
   const roots = useMemo(() => cases.filter((c) => !c.parentId), [cases]);
@@ -74,15 +77,17 @@ export function QaCaseTree({
     <aside className="qa-pane qa-pane-tree">
       <div className="qa-pane-head">
         <span>测试内容</span>
-        <Button
-          type="link"
-          size="small"
-          icon={<PlusOutlined />}
-          disabled={busy}
-          onClick={onGenerate}
-        >
-          生成
-        </Button>
+        {canWrite ? (
+          <Button
+            type="link"
+            size="small"
+            icon={<PlusOutlined />}
+            disabled={busy}
+            onClick={onGenerate}
+          >
+            生成
+          </Button>
+        ) : null}
       </div>
 
       <Input.Search
@@ -134,15 +139,17 @@ export function QaCaseTree({
                     title={root.status}
                   />
                 </button>
-                <Button
-                  type="text"
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                  disabled={busy}
-                  title="删除需求包及其子项"
-                  onClick={() => onDelete(root.id)}
-                />
+                {canWrite ? (
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    disabled={busy}
+                    title="删除需求包及其子项"
+                    onClick={() => onDelete(root.id)}
+                  />
+                ) : null}
               </div>
 
               {open && (
@@ -173,15 +180,17 @@ export function QaCaseTree({
                               title={ch.status}
                             />
                           </button>
-                          <Button
-                            type="text"
-                            size="small"
-                            danger
-                            icon={<DeleteOutlined />}
-                            disabled={busy}
-                            title="删除此测试项"
-                            onClick={() => onDelete(ch.id)}
-                          />
+                          {canWrite ? (
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              disabled={busy}
+                              title="删除此测试项"
+                              onClick={() => onDelete(ch.id)}
+                            />
+                          ) : null}
                         </div>
                       </li>
                     ))}

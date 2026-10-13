@@ -342,8 +342,9 @@ class QaApplication:
     def list_members(self) -> list[QaMember]:
         return self.store.list_members()
 
-    def add_member(self, name: str, role: str) -> list[QaMember]:
-        return self.store.upsert_member(name, role)
+    def add_member(self, user_id: str, name: str, role: str) -> list[QaMember]:
+        """只写成员表。真正开系统账号在路由里调 create_user。"""
+        return self.store.upsert_member(user_id=user_id, name=name, role=role)
 
     def set_member_role(self, member_id: str, role: str) -> list[QaMember]:
         return self.store.set_member_role(member_id, role)

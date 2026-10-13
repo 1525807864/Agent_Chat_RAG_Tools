@@ -51,4 +51,5 @@ def member_out(m: QaMember) -> dict:
         "id": m.id,
         "name": m.name,
         "role": m.role,
+        "userId": m.user_id, # 前端展示登录账号
     }

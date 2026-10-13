@@ -14,6 +14,8 @@ import type { QaProject } from "../../types/qa";
 type Props = {
   projects: QaProject[];
   busy: boolean;
+  /** admin 才能新建 / 删除项目 */
+  canWrite?: boolean;
   onOpen: (id: string) => void;
   onCreate: (name: string, baseUrl: string, goal: string) => void;
   onResetDemo: () => void;
@@ -23,6 +25,7 @@ type Props = {
 export function QaProjectList({
   projects,
   busy,
+  canWrite = true,
   onOpen,
   onCreate,
   onResetDemo,
@@ -43,44 +46,46 @@ export function QaProjectList({
         </Typography.Paragraph>
       </div>
 
-      <Card size="small" title="新建项目" className="qa-list-create-card">
-        <Space wrap style={{ width: "100%" }}>
-          <Input
-            style={{ width: 160 }}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="项目名称"
-          />
-          <Input
-            style={{ minWidth: 200, flex: 1 }}
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="被测 Base URL（可选）"
-          />
-          <Input
-            style={{ minWidth: 200, flex: 1 }}
-            value={goal}
-            onChange={(e) => setGoal(e.target.value)}
-            placeholder="一句话测试目标"
-          />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            loading={busy}
-            onClick={() => onCreate(name, baseUrl, goal)}
-          >
-            创建并进入
-          </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            disabled={busy}
-            onClick={onResetDemo}
-            title="清空本地壳数据"
-          >
-            重置演示
-          </Button>
-        </Space>
-      </Card>
+      {canWrite ? (
+        <Card size="small" title="新建项目" className="qa-list-create-card">
+          <Space wrap style={{ width: "100%" }}>
+            <Input
+              style={{ width: 160 }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="项目名称"
+            />
+            <Input
+              style={{ minWidth: 200, flex: 1 }}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="被测 Base URL（可选）"
+            />
+            <Input
+              style={{ minWidth: 200, flex: 1 }}
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              placeholder="一句话测试目标"
+            />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              loading={busy}
+              onClick={() => onCreate(name, baseUrl, goal)}
+            >
+              创建并进入
+            </Button>
+            <Button
+              icon={<ReloadOutlined />}
+              disabled={busy}
+              onClick={onResetDemo}
+              title="清空本地壳数据"
+            >
+              重置演示
+            </Button>
+          </Space>
+        </Card>
+      ) : null}
 
       <div className="qa-list-grid">
         {projects.map((p) => (
@@ -96,16 +101,20 @@ export function QaProjectList({
               >
                 进入工作台
               </Button>,
-              <Button
-                key="del"
-                type="link"
-                danger
-                icon={<DeleteOutlined />}
-                disabled={busy}
-                onClick={() => onDelete(p.id)}
-              >
-                删除
-              </Button>,
+              ...(canWrite
+                ? [
+                    <Button
+                      key="del"
+                      type="link"
+                      danger
+                      icon={<DeleteOutlined />}
+                      disabled={busy}
+                      onClick={() => onDelete(p.id)}
+                    >
+                      删除
+                    </Button>,
+                  ]
+                : []),
             ]}
           >
             <Card.Meta

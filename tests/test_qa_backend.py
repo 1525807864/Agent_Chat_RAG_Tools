@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from application.qa.serialize import case_out, project_out
+from application.qa.serialize import case_out, member_out, project_out
 from application.qa.service import QaApplication
 from infrastructure.qa.filesystem import QaFileStore
 
@@ -26,8 +26,9 @@ def test_qa_roundtrip(tmp_path: Path) -> None:
     left = app.delete_case(p.id, cases[0].id)
     assert left == []
 
-    members = app.add_member("Alice", "view")
-    assert any(m.name == "Alice" for m in members)
+    members = app.add_member("alice", "Alice", "view")
+    assert any(m.user_id == "alice" and m.role == "view" for m in members)
+    assert "userId" in member_out(members[0])
 
     app.delete_project(p.id)
     assert app.list_projects() == []

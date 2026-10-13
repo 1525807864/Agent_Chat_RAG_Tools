@@ -28,9 +28,10 @@ import type {
   QaProject, // 测试工作台：被测项目
   QaCase, // 测试工作台：用例
   QaRun, // 测试工作台：运行
+  
 } from "../types/api";
-import type { QaMember } from "../types/qa";
-
+import type { QaMe, QaMember } from "../types/qa";
+import type { OpsHealth, OpsAskResult } from "../types/ops";
 // GET /health：liveness 探活
 export function fetchHealth() {
   return apiJson<HealthResponse>("/health");
@@ -443,13 +444,23 @@ export function deleteQaCase(projectId: string, caseId: string) {
   );
 }
 
+/** GET 当前用户在测试平台的角色与权限 */
+export function fetchQaMe() {
+  return apiJson<QaMe>("/api/qa/me");
+}
+
 /** GET 成员 */
 export function fetchQaMembers() {
   return apiJson<{ items: QaMember[] }>("/api/qa/members");
 }
 
-/** POST 成员 */
-export function addQaMember(body: { name: string; role: string }) {
+/** Admin 邀请：会在当前租户创建登录账号 */
+export function inviteQaMember(body: {
+  username: string;
+  password: string;
+  role: string;
+  name?: string;
+}) {
   return apiJson<{ items: QaMember[] }>("/api/qa/members", {
     method: "POST",
     body: JSON.stringify(body),
@@ -609,6 +620,184 @@ export async function downloadQaRunExport(
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${runId}.${fmt}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** GET 运维引擎是否可达 */
+export function fetchOpsHealth() {
+  return apiJson<OpsHealth>("/api/ops/health");
+}
+
+/**
+ * POST 发起调查。
+ * conversation_history：把上一轮返回的 conversationHistory 原样带回，才能多轮。
+ */
+export function postOpsAsk(body: {
+  message: string;
+  conversation_history?: Record<string, unknown>[] | null;
+  model?: string | null;
+  /** P3：终端侧写观察，后端拼进 ask */
+  terminalContext?: string | null;
+  sandboxSessionId?: string | null;
+}) {
+  return apiJson<OpsAskResult>("/api/ops/ask", {
+    method: "POST",
+    body: JSON.stringify({
+      message: body.message,
+      conversation_history: body.conversation_history,
+      model: body.model,
+      terminalContext: body.terminalContext ?? null,
+      sandboxSessionId: body.sandboxSessionId ?? null,
+    }),
+  });
+}
+
+/** 打开交互终端（底层；一般用 openOpsTerminalWithApproval） */
+export function openOpsTerminal(body?: {
+  sessionId?: string | null;
+  readonly?: boolean;
+  approved?: boolean;
+}) {
+  return apiJson<import("../types/ops").OpsTerminalSession>(
+    "/api/ops/terminal/sessions",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: body?.sessionId ?? null,
+        readonly: body?.readonly ?? false,
+        approved: body?.approved ?? false,
+      }),
+    },
+  );
+}
+
+/**
+ * 打开终端并处理 409 审批：
+ * 1) approved:false → 后端先 acquire，若需审批返回 409 + sessionId
+ * 2) 弹 SandboxApprovalSheet
+ * 3) 允许则带 sessionId + approved:true 重放
+ */
+export async function openOpsTerminalWithApproval(body?: {
+  sessionId?: string | null;
+  readonly?: boolean;
+}): Promise<import("../types/ops").OpsTerminalSession> {
+  const { requestApproval } = await import("../sandbox/approvalStore");
+  const path = "/api/ops/terminal/sessions";
+  const readonly = body?.readonly ?? false;
+
+  // 只读：后端会跳过审批，直接 approved:false 即可成功
+  const firstBody = {
+    sessionId: body?.sessionId ?? null,
+    readonly,
+    approved: false,
+  };
+
+  const res = await fetch(`${getApiBase()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify(firstBody),
+  });
+  if (handleUnauthorized(res, path)) {
+    throw new Error("登录已失效，请重新登录");
+  }
+
+  if (res.ok) {
+    return (await res.json()) as import("../types/ops").OpsTerminalSession;
+  }
+
+  let raw: unknown = null;
+  try {
+    raw = await res.json();
+  } catch {
+    raw = null;
+  }
+  const detail =
+    raw && typeof raw === "object"
+      ? (raw as { detail?: unknown }).detail
+      : undefined;
+
+  const isObj = detail && typeof detail === "object";
+  const d = isObj ? (detail as Record<string, unknown>) : null;
+  const code = d && typeof d.code === "string" ? d.code : "";
+  const message =
+    (d && String(d.message || "")) ||
+    (typeof detail === "string" ? detail : "") ||
+    `打开终端失败 ${res.status}`;
+  const risk = (d && String(d.risk || message)) || message;
+  const sessionId =
+    (d && typeof d.sessionId === "string" && d.sessionId) ||
+    body?.sessionId ||
+    "";
+
+  const needsApproval =
+    res.status === 409 &&
+    (code === "SANDBOX_APPROVAL_REQUIRED" || /审批|确认|高危/.test(message));
+
+  if (!needsApproval) {
+    throw new Error(message);
+  }
+
+  const allowed = await requestApproval({
+    sessionId: sessionId || "pending-terminal",
+    kind: "shell",
+    command: "打开 Ops 交互终端（docker exec -it → bash）",
+    risk,
+    vertical: "ops",
+  });
+  if (!allowed) {
+    throw new Error("用户拒绝打开交互终端");
+  }
+
+  return openOpsTerminal({
+    sessionId: sessionId || null,
+    readonly,
+    approved: true,
+  });
+}
+
+/** 查询终端状态 */
+export function fetchOpsTerminal(terminalId: string) {
+  return apiJson<import("../types/ops").OpsTerminalSession>(
+    `/api/ops/terminal/sessions/${terminalId}`,
+  );
+}
+
+/** 关闭终端（杀 ttyd） */
+export function closeOpsTerminal(terminalId: string) {
+  return apiJson<{ ok: boolean }>(`/api/ops/terminal/sessions/${terminalId}`, {
+    method: "DELETE",
+  });
+}
+
+/** P4：下载终端 typescript 录制 */
+export async function downloadOpsTerminalRecording(
+  terminalId: string,
+): Promise<void> {
+  const path = `/api/ops/terminal/sessions/${terminalId}/recording`;
+  const res = await fetch(`${getApiBase()}${path}`, {
+    headers: { ...authHeaders() },
+  });
+  if (handleUnauthorized(res, path)) {
+    throw new Error("登录已失效，请重新登录");
+  }
+  if (!res.ok) {
+    let detail = res.statusText || "下载录制失败";
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      /* 非 JSON */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `ttyrec-${terminalId}.log`;
   a.click();
   URL.revokeObjectURL(a.href);
 }

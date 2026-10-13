@@ -1,4 +1,4 @@
-"""测试工作台 HTTP API。全部要登录；响应统一 camelCase。"""
+"""测试工作台 HTTP API。全部要登录；写/执行按 RBAC 拦截；响应 camelCase。"""
 
 from __future__ import annotations
 
@@ -9,14 +9,15 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.auth.deps import AuthUser, get_current_user
+from api.auth.user_store import create_user, get_user
+from application.qa.rbac import me_payload, require_member, require_qa_perm
 from application.qa.report_export import export_bytes
 from application.qa.serialize import case_out, member_out, project_out, run_out
 from application.qa.service import QaApplication
+from domain.qa import ALLOWED_ROLES
 from e2e.url_guard import E2EUrlError
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
-
-_ALLOWED_ROLES = frozenset({"admin", "execute", "view"})
 
 
 def _app(user: AuthUser) -> QaApplication:
@@ -55,9 +56,13 @@ class UiRunBody(BaseModel):
     base_url: str = Field(default="", max_length=512)
 
 
-class MemberBody(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40)
+class InviteMemberBody(BaseModel):
+    """Admin 给本租户开账号：用户名即登录账号，写入同一 tenant_id。"""
+
+    username: str = Field(..., min_length=3, max_length=32)
+    password: str = Field(..., min_length=8, max_length=256)
     role: str = Field(default="view")
+    name: str = Field(default="", max_length=40)  # 展示名，空则用 username
 
 
 class MemberRoleBody(BaseModel):
@@ -68,17 +73,29 @@ class AssistantBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     case_id: str | None = None
 
+
+# ---------- 当前身份 ----------
+
+
+@router.get("/me")
+async def qa_me(user: AuthUser = Depends(get_current_user)):
+    """前端用来隐藏「编辑 / 邀请」按钮。首次访问会 bootstrap 成 admin。"""
+    return me_payload(user)
+
+
 # ---------- 项目 ----------
 
 
 @router.get("/projects")
 async def list_projects(user: AuthUser = Depends(get_current_user)):
+    require_member(user)
     return {"items": [project_out(p) for p in _app(user).list_projects()]}
 
 
 @router.post("/projects")
 async def create_project(
-    body: CreateProjectBody, user: AuthUser = Depends(get_current_user)
+    body: CreateProjectBody,
+    user: AuthUser = Depends(require_qa_perm("project:write")),
 ):
     try:
         p = _app(user).create_project(body.name, body.base_url, body.goal)
@@ -91,6 +108,7 @@ async def create_project(
 
 @router.get("/projects/{project_id}")
 async def get_project(project_id: str, user: AuthUser = Depends(get_current_user)):
+    require_member(user)
     try:
         return project_out(_app(user).get_project(project_id))
     except FileNotFoundError:
@@ -101,7 +119,7 @@ async def get_project(project_id: str, user: AuthUser = Depends(get_current_user
 async def patch_project(
     project_id: str,
     body: PatchProjectBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("project:write")),
 ):
     try:
         p = _app(user).update_project(
@@ -119,7 +137,8 @@ async def patch_project(
 
 @router.delete("/projects/{project_id}")
 async def delete_project(
-    project_id: str, user: AuthUser = Depends(get_current_user)
+    project_id: str,
+    user: AuthUser = Depends(require_qa_perm("project:delete")),
 ):
     try:
         _app(user).delete_project(project_id)
@@ -132,7 +151,7 @@ async def delete_project(
 async def upload_source(
     project_id: str,
     file: UploadFile = File(...),
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("project:write")),
 ):
     raw = await file.read()
     text = raw.decode("utf-8", errors="ignore")
@@ -150,6 +169,7 @@ async def upload_source(
 
 @router.get("/projects/{project_id}/cases")
 async def list_cases(project_id: str, user: AuthUser = Depends(get_current_user)):
+    require_member(user)
     try:
         items = _app(user).list_cases(project_id)
     except FileNotFoundError:
@@ -161,7 +181,7 @@ async def list_cases(project_id: str, user: AuthUser = Depends(get_current_user)
 async def generate_cases(
     project_id: str,
     body: GenerateBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("case:write")),
 ):
     try:
         items = _app(user).generate_cases(project_id, body.goal)
@@ -175,7 +195,7 @@ async def confirm_case(
     project_id: str,
     case_id: str,
     body: ConfirmBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("case:write")),
 ):
     try:
         c = _app(user).confirm_case(project_id, case_id, body.fused)
@@ -188,7 +208,7 @@ async def confirm_case(
 async def delete_case(
     project_id: str,
     case_id: str,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("case:write")),
 ):
     try:
         items = _app(user).delete_case(project_id, case_id)
@@ -202,6 +222,7 @@ async def delete_case(
 
 @router.get("/projects/{project_id}/runs")
 async def list_runs(project_id: str, user: AuthUser = Depends(get_current_user)):
+    require_member(user)
     try:
         items = _app(user).list_runs(project_id)
     except FileNotFoundError:
@@ -213,7 +234,7 @@ async def list_runs(project_id: str, user: AuthUser = Depends(get_current_user))
 async def run_smoke(
     project_id: str,
     body: RunBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("run:execute")),
 ):
     try:
         run = _app(user).run_smoke(project_id, body.case_ids)
@@ -230,7 +251,7 @@ async def run_smoke(
 async def run_ui(
     project_id: str,
     body: UiRunBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("run:execute")),
 ):
     """SSE：每步一条 data JSON，最后一条 type=done（含落盘后的 run）。"""
     app = _app(user)
@@ -315,6 +336,7 @@ async def export_run(
     user: AuthUser = Depends(get_current_user),
 ):
     """导出该次运行步骤证据。fmt=xlsx|docx|pdf。"""
+    require_member(user)
     try:
         run = _app(user).get_run(project_id, run_id)
         data, mime, filename = export_bytes(run, fmt)
@@ -338,7 +360,7 @@ async def export_run(
 async def assistant(
     project_id: str,
     body: AssistantBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("case:write")),
 ):
     try:
         result = _app(user).apply_assistant(project_id, body.case_id, body.text)
@@ -353,22 +375,40 @@ async def assistant(
     }
 
 
-# ---------- 成员 ----------
+# ---------- 成员（SaaS 用户配置）----------
 
 
 @router.get("/members")
 async def list_members(user: AuthUser = Depends(get_current_user)):
+    require_member(user)
     return {"items": [member_out(m) for m in _app(user).list_members()]}
 
 
 @router.post("/members")
-async def add_member(
-    body: MemberBody, user: AuthUser = Depends(get_current_user)
+async def invite_member(
+    body: InviteMemberBody,
+    user: AuthUser = Depends(require_qa_perm("member:manage")),
 ):
-    if body.role not in _ALLOWED_ROLES:
+    """邀请团队成员进入当前租户。
+
+    - 用户不存在：create_user(..., tenant_id=当前租户)
+    - 已在本租户：只写入/更新 QA 角色，不改密码
+    - 已在别的租户：拒绝，避免串租户
+    """
+    if body.role not in ALLOWED_ROLES:
         raise HTTPException(status_code=400, detail="非法角色")
+    username = body.username.strip()
+    existing = get_user(username)
+    if existing is None:
+        try:
+            create_user(username, body.password, tenant_id=user.tenant_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    elif existing.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=409, detail="该用户已属于其他租户")
+    display = (body.name or "").strip() or username
     try:
-        items = _app(user).add_member(body.name, body.role)
+        items = _app(user).add_member(username, display, body.role)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"items": [member_out(m) for m in items]}
@@ -378,20 +418,23 @@ async def add_member(
 async def patch_member(
     member_id: str,
     body: MemberRoleBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_qa_perm("member:manage")),
 ):
-    if body.role not in _ALLOWED_ROLES:
+    if body.role not in ALLOWED_ROLES:
         raise HTTPException(status_code=400, detail="非法角色")
     try:
         items = _app(user).set_member_role(member_id, body.role)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="成员不存在") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"items": [member_out(m) for m in items]}
 
 
 @router.delete("/members/{member_id}")
 async def delete_member(
-    member_id: str, user: AuthUser = Depends(get_current_user)
+    member_id: str,
+    user: AuthUser = Depends(require_qa_perm("member:manage")),
 ):
     try:
         items = _app(user).delete_member(member_id)

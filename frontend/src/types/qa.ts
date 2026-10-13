@@ -85,15 +85,31 @@ export type QaNav =
     | "cases" //测试内容
     | "runs" //执行记录
     | "report" //报告
-    | "members" //成员权限
+    | "members" //用户与权限
     | "knowledge"; //知识库
 
 /**本租户成员角色，只在当前租户内有效 */
-export type QaMemberRole = "admin" | "execute" | "view"
+export type QaMemberRole = "admin" | "execute" | "view";
+
 export interface QaMember {
   id: string;
   name: string;
   role: QaMemberRole;
+  /** 登录用户名，等于 JWT sub */
+  userId: string;
+}
+
+/** GET /api/qa/me */
+export interface QaMe {
+  userId: string;
+  tenantId: string;
+  role: QaMemberRole;
+  permissions: {
+    canWriteProject: boolean;
+    canWriteCase: boolean;
+    canExecute: boolean;
+    canManageMembers: boolean;
+  };
 }
 /**右侧助手的一条消息 */
 export interface QaChatTurn {

@@ -18,7 +18,7 @@ const ITEMS: { id: QaNav; label: string; icon: ReactNode }[] = [
   { id: "cases", label: "测试内容", icon: <ExperimentOutlined /> },
   { id: "runs", label: "执行记录", icon: <PlayCircleOutlined /> },
   { id: "report", label: "报告", icon: <FileTextOutlined /> },
-  { id: "members", label: "成员权限", icon: <TeamOutlined /> },
+  { id: "members", label: "用户与权限", icon: <TeamOutlined /> },
   { id: "knowledge", label: "知识库", icon: <ReadOutlined /> },
 ];
 

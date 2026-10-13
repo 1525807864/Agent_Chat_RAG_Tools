@@ -12,6 +12,7 @@ export function QaRunsPage({
   defaultUrl,
   busy,
   uiRunning,
+  canExecute = true,
   onSmoke,
   onUi,
   onExport,
@@ -20,6 +21,8 @@ export function QaRunsPage({
   defaultUrl: string;
   busy: boolean;
   uiRunning: boolean;
+  /** admin / execute 才能跑冒烟与 UI 测试 */
+  canExecute?: boolean;
   onSmoke: () => void;
   onUi: (name: string, url: string, goal: string) => void;
   onExport: (runId: string, fmt: "xlsx" | "docx" | "pdf") => void;
@@ -36,51 +39,59 @@ export function QaRunsPage({
     <section className="qa-pane qa-center-page">
       <div className="qa-pane-head">
         <span>执行记录</span>
-        <Button
-          icon={<PlayCircleOutlined />}
-          loading={busy && !uiRunning}
-          disabled={uiRunning}
-          onClick={onSmoke}
-        >
-          执行冒烟（HTTP）
-        </Button>
+        {canExecute ? (
+          <Button
+            icon={<PlayCircleOutlined />}
+            loading={busy && !uiRunning}
+            disabled={uiRunning}
+            onClick={onSmoke}
+          >
+            执行冒烟（HTTP）
+          </Button>
+        ) : null}
       </div>
 
-      <Space
-        direction="vertical"
-        size={8}
-        style={{ width: "100%", marginBottom: 16 }}
-      >
-        <Typography.Text type="secondary">
-          智能 UI 测试：本机弹出浏览器，模型按目标逐步操作；右侧同步每一步，结束后可导出证据。
-        </Typography.Text>
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="测试名称"
-        />
-        <Input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://被测站点"
-        />
-        <Input.TextArea
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          placeholder="测试目标（给模型执行，例如：登录后进入订单列表并确认有数据）"
-          rows={3}
-          maxLength={4000}
-        />
-        <Button
-          type="primary"
-          icon={<PlayCircleOutlined />}
-          loading={uiRunning}
-          disabled={busy && !uiRunning}
-          onClick={() => onUi(name, url, goal)}
+      {canExecute ? (
+        <Space
+          direction="vertical"
+          size={8}
+          style={{ width: "100%", marginBottom: 16 }}
         >
-          开始智能 UI 测试
-        </Button>
-      </Space>
+          <Typography.Text type="secondary">
+            智能 UI 测试：本机弹出浏览器，模型按目标逐步操作；右侧同步每一步，结束后可导出证据。
+          </Typography.Text>
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="测试名称"
+          />
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://被测站点"
+          />
+          <Input.TextArea
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder="测试目标（给模型执行，例如：登录后进入订单列表并确认有数据）"
+            rows={3}
+            maxLength={4000}
+          />
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            loading={uiRunning}
+            disabled={busy && !uiRunning}
+            onClick={() => onUi(name, url, goal)}
+          >
+            开始智能 UI 测试
+          </Button>
+        </Space>
+      ) : (
+        <Typography.Paragraph type="secondary">
+          当前角色为只读，不能执行测试。
+        </Typography.Paragraph>
+      )}
 
       {runs.length ? (
         <List

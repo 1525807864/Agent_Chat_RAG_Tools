@@ -221,44 +221,92 @@ class QaFileStore:
             raise FileNotFoundError(run_id)
         return _run_from_raw(raw)
 
-    # ---------- 成员（租户级 members.json）----------
+    # ---------- 成员（租户级 members.json，绑定登录 user_id）----------
+
 
     def _members_path(self) -> Path:
         return self._dir / "members.json"
 
+
     def list_members(self) -> list[QaMember]:
-        """没有文件时返回当前租户名一条 admin。"""
+        """没有文件时返回空列表，由 rbac.bootstrap_owner 写入第一位 admin。
+
+        兼容旧 JSON：只有 id/name/role、没有 user_id 时补空串。
+        """
         raw = self._read_json(self._members_path(), None)
         if not raw or not isinstance(raw, list):
-            return [QaMember(id="me", name=self._dir.name, role="admin")]
-        return [QaMember(**m) for m in raw if isinstance(m, dict) and m.get("id")]
+            return []
+        out: list[QaMember] = []
+        for item in raw:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            out.append(
+                QaMember(
+                    id=str(item["id"]),
+                    name=str(item.get("name") or ""),
+                    role=str(item.get("role") or "view"),
+                    user_id=str(item.get("user_id") or ""),
+                )
+            )
+        return out
+
 
     def save_members(self, members: list[QaMember]) -> None:
-        self._write_json(self._members_path(), [m.__dict__ for m in members])
+        self._write_json(
+            self._members_path(),
+            [
+                {
+                    "id": m.id,
+                    "name": m.name,
+                    "role": m.role,
+                    "user_id": m.user_id,
+                }
+                for m in members
+            ],
+        )
 
-    def upsert_member(self, name: str, role: str) -> list[QaMember]:
-        """按 name 更新角色；没有则追加。"""
+
+    def upsert_member(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        role: str,
+    ) -> list[QaMember]:
+        """按 user_id 更新角色；没有则追加。禁止空账号。"""
+        uid = (user_id or "").strip()
+        if not uid:
+            raise ValueError("user_id 不能为空")
+        clean_name = (name or uid).strip()[:40] or uid
         members = self.list_members()
-        clean = (name or "").strip()[:40]
-        if not clean:
-            raise ValueError("成员名不能为空")
         for m in members:
-            if m.name == clean:
+            if m.user_id == uid:
+                m.name = clean_name
                 m.role = role
                 self.save_members(members)
                 return members
-        members.append(QaMember(id=_sid(), name=clean, role=role))
+        members.append(QaMember(id=_sid(), name=clean_name, role=role, user_id=uid))
         self.save_members(members)
         return members
 
+
     def set_member_role(self, member_id: str, role: str) -> list[QaMember]:
         members = self.list_members()
+        found = None
         for m in members:
             if m.id == member_id:
-                m.role = role
-                self.save_members(members)
-                return members
-        raise FileNotFoundError(member_id)
+                found = m
+                break
+        if found is None:
+            raise FileNotFoundError(member_id)
+        # 把最后一个 admin 降级会锁死租户
+        if found.role == "admin" and role != "admin":
+            if sum(1 for x in members if x.role == "admin") <= 1:
+                raise ValueError("不能取消最后一个管理员")
+        found.role = role
+        self.save_members(members)
+        return members
+
 
     def delete_member(self, member_id: str) -> list[QaMember]:
         """删除成员；至少保留一名 admin。"""

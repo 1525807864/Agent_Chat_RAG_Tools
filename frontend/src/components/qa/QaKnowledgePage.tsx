@@ -9,10 +9,12 @@ import type { QaProject } from "../../types/qa";
 export function QaKnowledgePage({
   project,
   busy,
+  canWrite = true,
   onUpload,
 }: {
   project: QaProject;
   busy: boolean;
+  canWrite?: boolean;
   onUpload: (file: File) => void;
 }) {
   return (
@@ -31,7 +33,7 @@ export function QaKnowledgePage({
                   multiple={false}
                   showUploadList={false}
                   accept=".pdf,.txt,.md,.docx"
-                  disabled={busy}
+                  disabled={busy || !canWrite}
                   beforeUpload={(file) => {
                     onUpload(file);
                     return false;

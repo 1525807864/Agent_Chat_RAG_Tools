@@ -13,10 +13,13 @@ KIND_SECURITY = "security"
 KIND_COMPAT = "compat"
 
 # ---------- 成员角色（仅本租户内有效）----------
-ROLE_ADMIN = "admin"      # 可管理：增删改项目/成员
-ROLE_EXECUTE = "execute"  # 可执行：跑冒烟、确认用例
-ROLE_VIEW = "view"        # 只读
-
+# admin   : 可管理项目 / 编辑用例 / 邀请成员 / 执行
+# execute : 只能执行用例，不能改用例、不能管成员
+# view    : 只读
+ROLE_ADMIN = "admin"
+ROLE_EXECUTE = "execute"
+ROLE_VIEW = "view"
+ALLOWED_ROLES = frozenset({ROLE_ADMIN, ROLE_EXECUTE, ROLE_VIEW})
 
 @dataclass
 class QaSourceDoc:
@@ -74,7 +77,12 @@ class QaRun:
 
 @dataclass
 class QaMember:
-    """租户内成员（第一期落盘 members.json，不做跨租户）。"""
+    """租户内一名真实登录用户的 QA 角色。
+
+    user_id 必须等于 JWT 的 sub（登录用户名）。
+    旧数据可能没有 user_id，反序列化时给空串，由 bootstrap 补齐。
+    """
     id: str
     name: str
     role: str  # admin | execute | view
+    user_id: str = ""  # 登录账号，首次进入会写成当前用户

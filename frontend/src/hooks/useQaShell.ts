@@ -7,6 +7,7 @@ import { readTenantId } from "../auth/token";
 import type {
   QaCase,
   QaChatTurn,
+  QaMe,
   QaMember,
   QaMemberRole,
   QaNav,
@@ -16,17 +17,18 @@ import type {
   QaView,
 } from "../types/qa";
 import {
-  addQaMember,
   confirmQaCase,
   createQaProject,
   deleteQaCase,
   deleteQaMember,
   deleteQaProject,
   fetchQaCases,
+  fetchQaMe,
   fetchQaMembers,
   fetchQaProjects,
   fetchQaRuns,
   generateQaCases,
+  inviteQaMember,
   patchQaMember,
   patchQaProject,
   postQaAssistant,
@@ -35,6 +37,27 @@ import {
   streamQaUiRun,
   uploadQaSource,
 } from "../api/endpoints";
+
+const EMPTY_PERMS: QaMe["permissions"] = {
+  canWriteProject: false,
+  canWriteCase: false,
+  canExecute: false,
+  canManageMembers: false,
+};
+
+function mapMember(m: {
+  id: string;
+  name: string;
+  role: string;
+  userId?: string;
+}): QaMember {
+  return {
+    id: m.id,
+    name: m.name,
+    role: m.role as QaMemberRole,
+    userId: m.userId || "",
+  };
+}
 
 /** API camelCase → 前端 QaProject（补默认 sourceDocs / rows） */
 function mapProject(p: {
@@ -129,6 +152,7 @@ export function useQaShell() {
   const [chat, setChat] = useState<QaChatTurn[]>([]);
   const [materialsOpen, setMaterialsOpen] = useState(true);
   const [members, setMembers] = useState<QaMember[]>([]);
+  const [me, setMe] = useState<QaMe | null>(null);
   const [projects, setProjects] = useState<QaProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [cases, setCases] = useState<QaCase[]>([]);
@@ -158,24 +182,25 @@ export function useQaShell() {
 
   const refreshMembers = useCallback(async () => {
     const res = await fetchQaMembers();
-    setMembers(
-      (res.items || []).map((m) => ({
-        id: m.id,
-        name: m.name,
-        role: m.role as QaMemberRole,
-      })),
-    );
+    setMembers((res.items || []).map(mapMember));
+  }, []);
+
+  const refreshMe = useCallback(async () => {
+    const res = await fetchQaMe();
+    setMe(res);
   }, []);
 
   useEffect(() => {
     void (async () => {
       try {
+        // 先 /me 触发 bootstrap，再拉项目与成员
+        await refreshMe();
         await Promise.all([refreshProjects(), refreshMembers()]);
       } catch (e) {
         setNotice(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [refreshProjects, refreshMembers]);
+  }, [refreshProjects, refreshMembers, refreshMe]);
 
   const openProject = useCallback(async (projectId: string) => {
     setBusy(true);
@@ -409,17 +434,17 @@ export function useQaShell() {
     [activeProjectId, selectedCaseId],
   );
 
-  const addMember = useCallback(
-    async (name: string, role: QaMemberRole) => {
+  const inviteMember = useCallback(
+    async (body: {
+      username: string;
+      password: string;
+      role: QaMemberRole;
+      name: string;
+    }) => {
       try {
-        const res = await addQaMember({ name, role });
-        setMembers(
-          (res.items || []).map((m) => ({
-            id: m.id,
-            name: m.name,
-            role: m.role as QaMemberRole,
-          })),
-        );
+        const res = await inviteQaMember(body);
+        setMembers((res.items || []).map(mapMember));
+        setNotice("已邀请成员，对方用该用户名密码登录即可");
       } catch (e) {
         setNotice(e instanceof Error ? e.message : String(e));
       }
@@ -430,13 +455,7 @@ export function useQaShell() {
   const setMemberRole = useCallback(async (id: string, role: QaMemberRole) => {
     try {
       const res = await patchQaMember(id, role);
-      setMembers(
-        (res.items || []).map((m) => ({
-          id: m.id,
-          name: m.name,
-          role: m.role as QaMemberRole,
-        })),
-      );
+      setMembers((res.items || []).map(mapMember));
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
     }
@@ -446,13 +465,7 @@ export function useQaShell() {
     if (!window.confirm("确定移除该成员？")) return;
     try {
       const res = await deleteQaMember(id);
-      setMembers(
-        (res.items || []).map((m) => ({
-          id: m.id,
-          name: m.name,
-          role: m.role as QaMemberRole,
-        })),
-      );
+      setMembers((res.items || []).map(mapMember));
       setNotice("已移除成员");
     } catch (e) {
       setNotice(e instanceof Error ? e.message : String(e));
@@ -561,10 +574,13 @@ export function useQaShell() {
     materialsOpen,
     setMaterialsOpen,
     members,
+    me,
+    permissions: me?.permissions ?? EMPTY_PERMS,
     sendAssistant,
-    addMember,
+    inviteMember,
     setMemberRole,
     deleteMember,
     refreshMembers,
+    refreshMe,
   };
 }

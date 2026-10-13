@@ -23,6 +23,10 @@ type Props = {
   runs: QaRun[];
   busy: boolean;
   materialsOpen: boolean;
+  /** admin：助手改用例 */
+  canWriteCase?: boolean;
+  /** admin：保存环境 / 上传资料 */
+  canWriteProject?: boolean;
   onToggleMaterials: () => void;
   onSend: (text: string) => void;
   onUpload: (file: File) => void;
@@ -37,6 +41,8 @@ export function QaAssistant({
   runs,
   busy,
   materialsOpen,
+  canWriteCase = true,
+  canWriteProject = true,
   onToggleMaterials,
   onSend,
   onUpload,
@@ -101,15 +107,21 @@ export function QaAssistant({
         >
           <Input
             value={text}
-            disabled={busy || !project}
-            placeholder={project ? "描述要改的用例" : "请先进入一个项目"}
+            disabled={busy || !project || !canWriteCase}
+            placeholder={
+              !project
+                ? "请先进入一个项目"
+                : canWriteCase
+                  ? "描述要改的用例"
+                  : "当前角色不能改用例"
+            }
             onChange={(e) => setText(e.target.value)}
           />
           <Button
             type="primary"
             htmlType="submit"
             icon={<SendOutlined />}
-            disabled={busy || !project}
+            disabled={busy || !project || !canWriteCase}
           >
             发送
           </Button>
@@ -138,6 +150,7 @@ export function QaAssistant({
                       value={baseUrl}
                       onChange={(e) => setBaseUrl(e.target.value)}
                       placeholder="https://被测站点"
+                      disabled={!canWriteProject}
                     />
                   </div>
                   <div>
@@ -146,12 +159,13 @@ export function QaAssistant({
                       rows={3}
                       value={goal}
                       onChange={(e) => setGoal(e.target.value)}
+                      disabled={!canWriteProject}
                     />
                   </div>
                   <Space wrap>
                     <Button
                       icon={<SaveOutlined />}
-                      disabled={busy}
+                      disabled={busy || !canWriteProject}
                       onClick={() =>
                         onSaveEnv({ name: project.name, baseUrl, goal })
                       }
@@ -161,12 +175,16 @@ export function QaAssistant({
                     <Upload
                       showUploadList={false}
                       accept=".pdf,.txt,.md,.docx"
+                      disabled={!canWriteProject}
                       beforeUpload={(file) => {
                         onUpload(file);
                         return false;
                       }}
                     >
-                      <Button icon={<CloudUploadOutlined />} disabled={busy}>
+                      <Button
+                        icon={<CloudUploadOutlined />}
+                        disabled={busy || !canWriteProject}
+                      >
                         上传文档
                       </Button>
                     </Upload>
