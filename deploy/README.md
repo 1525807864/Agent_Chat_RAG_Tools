@@ -53,3 +53,68 @@ APP_DIR="$(pwd)" SKIP_GIT=1 bash deploy/update.sh
 ```bash
 bash /opt/LangChain_Demo/deploy/update.sh
 ```
+
+## 本机 Docker Desktop Kubernetes（第一期）
+
+适合：本机已启用 Docker Desktop → Kubernetes，先跑通 **web + api + mysql + redis + holmes**（不开沙箱 / 不开 ttyd）。
+
+### 准备
+
+1. `kubectl config use-context docker-desktop` 且 `kubectl get nodes` 为 Ready。
+2. 构建业务镜像（与 YAML 中名字一致）：
+
+```powershell
+cd D:\LangChain_Demo
+$env:SANDBOX_WORKSPACE_HOST="D:/LangChain_Demo/data/sandbox"
+docker compose build --pull=false api nginx
+```
+
+3. 精简 Secret（**不要**用整份 `.env`，易重复键 / 键名带空格）：
+
+```powershell
+# 方式 A：从根目录 .env 抽出所需键（推荐本机已有 .env 时）
+python deploy/k8s/_gen_env_k8s.py
+
+# 方式 B：手工复制模板再填值
+# Copy-Item deploy\k8s\env.k8s.example deploy\k8s\env.k8s
+# KEY=value，等号两边无空格；每个键只一行
+
+kubectl apply -f deploy/k8s/00-namespace.yaml
+kubectl -n nexora delete secret nexora-secret --ignore-not-found
+kubectl -n nexora create secret generic nexora-secret --from-env-file=deploy/k8s/env.k8s
+```
+
+4. 应用清单并观察：
+
+```powershell
+kubectl apply -f deploy/k8s/
+kubectl -n nexora get pods -w
+```
+
+5. 前端入口：**http://localhost:8080**（不要用 `:80`）。
+
+```powershell
+curl.exe http://127.0.0.1:8080/health
+```
+
+### 已知坑
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| mysql Crash，日志含 `MYSQL_USER="root"` | 官方镜像禁止用 `MYSQL_USER` 配置 root | `20-mysql.yaml` 只保留 `MYSQL_ROOT_PASSWORD` + `MYSQL_DATABASE` |
+| holmes `HOLMES_PORT=tcp://...` ValueError | Service 名 `holmes` 注入 Docker-link 风格环境变量 | `enableServiceLinks: false` + `HOLMES_PORT=5050` |
+| 浏览器打开 localhost 是 Welcome to nginx | WSL/本机 nginx 占 `127.0.0.1:80` | web Service 映射 **8080** |
+| `create secret` 报 duplicate / invalid key | `.env` 重复键或 `KEY ` 带空格 | 用 `deploy/k8s/env.k8s`，键名去空格、去重 |
+| Memory / 混合召回静默降级 | 未注入 `EMBEDDING_*` | `env.k8s` + `40-api.yaml` 已要求这三项 |
+| 日志里 AUTH_DEBUG / OpenAPI 警告 | 镜像默认偏松 | `40-api.yaml` 已显式 `AUTH_DEBUG_ENABLED=false`、`OPENAPI_ENABLED=false` |
+
+### 改配置后滚动
+
+```powershell
+kubectl -n nexora delete secret nexora-secret --ignore-not-found
+kubectl -n nexora create secret generic nexora-secret --from-env-file=deploy/k8s/env.k8s
+kubectl apply -f deploy/k8s/40-api.yaml
+kubectl -n nexora rollout restart deploy/api
+```
+
+上云时把 `STRICT_PRODUCTION` 改为 `"true"`，并按生产要求收紧 CORS / 管理员口令等（见上文 Compose 生产开关）。

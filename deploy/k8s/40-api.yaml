@@ -1,0 +1,148 @@
+# API：第一期关掉沙箱和 ttyd，避免 docker.sock
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: nexora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          # compose build 出来的本地镜像名；若你的不同，改这里
+          image: langchain_demo-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8020
+          env:
+            # ---- 连集群内服务（名字=Service名）----
+            - name: AUTH_ENABLED
+              value: "true"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: MEMORY_BACKEND
+              value: "redis"
+            - name: RATE_LIMIT_BACKEND
+              value: "redis"
+            - name: AUTH_BACKEND
+              value: "mysql"
+            - name: MYSQL_HOST
+              value: "mysql"
+            - name: MYSQL_PORT
+              value: "3306"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_DATABASE
+            - name: TRUST_PROXY
+              value: "true"
+            # ---- 本机 K8s 显式关掉调试口（上云可把 STRICT_PRODUCTION 改为 true）----
+            - name: STRICT_PRODUCTION
+              value: "false"
+            - name: AUTH_DEBUG_ENABLED
+              value: "false"
+            - name: OPENAPI_ENABLED
+              value: "false"
+            - name: DEBUG
+              value: "false"
+            - name: ALLOW_REGISTER
+              value: "false"
+            # ---- Holmes ----
+            - name: HOLMES_ENABLED
+              value: "true"
+            - name: HOLMES_API_BASE
+              value: "http://holmes:5050"
+            # ---- 第一期先关沙箱/终端（K8s 里别挂 docker.sock）----
+            - name: SANDBOX_ENABLED
+              value: "false"
+            - name: OPS_TTYD_ENABLED
+              value: "false"
+            # 旧镜像若仍校验 >=1，这里给 3，避免再踩 0
+            - name: SANDBOX_MAX_SESSIONS_PER_TENANT
+              value: "3"
+            # ---- Secret：见 deploy/k8s/env.k8s.example ----
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_KEY
+            - name: DEEPSEEK_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_BASE
+                  optional: true
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: JWT_SECRET
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: ADMIN_USERNAME
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: ADMIN_PASSWORD
+            # Embedding：缺键会 CreateContainerConfigError；填好 env.k8s 再启
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_API_KEY
+            - name: EMBEDDING_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_API_BASE
+            - name: EMBEDDING_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_MODEL
+          volumeMounts:
+            # 对应原来的 app_data；本机 emptyDir 即可
+            - name: app-data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8020
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: app-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: nexora
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 8020
+      targetPort: 8020

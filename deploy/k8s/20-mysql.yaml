@@ -1,0 +1,65 @@
+# 本机 MySQL：用 emptyDir 存数据（删 Pod 数据会没，够本地测）
+# 生产请换成 RDS / PVC，别照搬 emptyDir
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  namespace: nexora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+          ports:
+            - containerPort: 3306
+          env:
+            # 密码从 Secret 读；键名要和你 --from-env-file=.env 里一致
+            - name: TZ
+              value: Asia/Shanghai
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_DATABASE
+            # 不要设 MYSQL_USER=root：官方镜像会直接退出。
+            # 本机 .env 里 MYSQL_USER=root 时，只用 ROOT_PASSWORD + DATABASE 即可。
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "127.0.0.1"]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: nexora
+spec:
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+      targetPort: 3306

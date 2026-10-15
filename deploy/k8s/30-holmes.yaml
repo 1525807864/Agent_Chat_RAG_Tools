@@ -1,0 +1,64 @@
+# Holmes HTTP 服务。官方镜像 ENTRYPOINT 是 holmes_cli.py，
+# 必须覆盖 entrypoint，否则会报 No such command 'python'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: holmes
+  namespace: nexora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: holmes
+  template:
+    metadata:
+      labels:
+        app: holmes
+    spec:
+      # Service 名 holmes 会注入 HOLMES_PORT=tcp://...，与应用期望的数字端口冲突
+      enableServiceLinks: false
+      containers:
+        - name: holmes
+          image: robustadev/holmes:latest
+          imagePullPolicy: IfNotPresent
+          # 关键点：盖掉默认 CLI
+          command: ["python", "-u", "server.py"]
+          ports:
+            - containerPort: 5050
+          env:
+            # 和 Compose 一样：把 DeepSeek 钥塞给 OPENAI_*
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_KEY
+            - name: OPENAI_API_BASE
+              value: "https://api.deepseek.com/v1"
+            - name: MODEL
+              value: "deepseek"
+            - name: HOLMES_PORT
+              value: "5050"
+            # 若 .env 有 HOLMES_API_KEY 再解开；没有就整段删掉
+            # - name: HOLMES_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: nexora-secret
+            #       key: HOLMES_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5050
+            initialDelaySeconds: 20
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: holmes
+  namespace: nexora
+spec:
+  selector:
+    app: holmes
+  ports:
+    - port: 5050
+      targetPort: 5050
