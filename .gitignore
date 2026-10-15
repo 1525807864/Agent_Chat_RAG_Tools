@@ -5,6 +5,8 @@
 !.env.example
 !**/.env.example
 !.env.production.example
+# 本机 K8s 精简 Secret（含真实密钥）；模板 env.k8s.example 可提交
+deploy/k8s/env.k8s
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
@@ -86,3 +88,9 @@ data/e2e/node_modules/
 .playwright-mcp/
 /baidu-*.png
 /draggable-*.png
+
+# 评测跑批报告与本地缓存（保留目录占位）
+evals/reports/*
+!evals/reports/.gitkeep
+evals/.deepeval
+evals/.pytest_cache/
