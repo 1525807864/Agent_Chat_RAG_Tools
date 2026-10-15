@@ -122,8 +122,9 @@ class ReActAgent(BaseAgent):
         """只有明显要联网查事实时才强制搜；闲聊/常识不搜。"""
         text = (task or "").lower()
         hints = (
-            "新闻", "股价", "行情", "纳斯达克", "天气", "今日", "今天油价",
-            "实时", "最新", "搜一下", "搜索", "查一下网上", "需要查询网页信息",
+            "新闻", "股价", "行情", "纳斯达克", "天气", "气温", "今日", "今天油价",
+            "实时", "最新", "搜一下", "搜索", "查一下", "查一下网上", "用工具",
+            "需要查询网页信息", "发布日期", "release date",
             "news", "stock", "weather", "price today",
         )
         return any(h in text for h in hints)
@@ -334,14 +335,21 @@ class ReActAgent(BaseAgent):
             action_name, action_input = self._parse_action(thought)
             if not action_name:
                 consecutive_parse_failures += 1
-                #模型用自然语言直接答、没写Action->把整段当答案
                 stripped = (thought or "").strip()
+                needs_net = (
+                    self._has_web_search() and self._needs_web_search(task)
+                )
+
+                # 寒暄/常识：无 Action 的自然语言可直接当最终答案（零工具）
                 if (
-                    consecutive_parse_failures >= 1
-                    and stripped 
+                    not needs_net
+                    and consecutive_parse_failures >= 1
+                    and stripped
                     and "action:" not in stripped.lower()
                 ):
-                    _log.info("[%s] 非ReAct格式，当作直接回答",self.name)
+                    _log.info(
+                        "[%s] 非ReAct格式且无需联网，当作直接回答", self.name
+                    )
                     return {
                         "agent": self.name,
                         "role": self.role,
@@ -350,12 +358,10 @@ class ReActAgent(BaseAgent):
                         "iterations": iteration + 1,
                         "usage": usage_acc.to_dict(),
                     }
-                
 
-                # 仅[需要联网]的问题才强制搜一次
+                # 需联网且尚未搜过：强制搜一次，禁止散文提前 return
                 if (
-                    self._has_web_search()
-                    and self._needs_web_search(task)
+                    needs_net
                     and not tool_calls_log
                     and not forced_once
                     and consecutive_parse_failures >= 1
@@ -367,7 +373,9 @@ class ReActAgent(BaseAgent):
                             "iteration": iteration,
                             "tool": "web_search",
                             "input": {"query": task[:1000]},
-                            "output": str(context.get("last_tool_result", ""))[:2000],
+                            "output": str(
+                                context.get("last_tool_result", "")
+                            )[:2000],
                             "forced": True,
                         }
                     )
@@ -376,10 +384,32 @@ class ReActAgent(BaseAgent):
                     context = (context or {}) | {
                         "format_reminder": (
                             "已为你执行 web_search，Observation 见上。"
-                            "请输出 Final Answer: 基于搜索结果的中文总结（含关键数字/来源链接若有）。"
+                            "请输出 Final Answer: 基于搜索结果的中文总结"
+                            "（含关键数字/来源链接若有）。"
+                            "禁止声称已搜索却不引用 Observation；"
+                            "查不到就明确说查不到。"
                         )
                     }
                     continue
+
+                # 已搜过仍无 Action：允许把当前散文当拒答/总结
+                if (
+                    needs_net
+                    and (tool_calls_log or forced_once)
+                    and stripped
+                    and "action:" not in stripped.lower()
+                ):
+                    _log.info(
+                        "[%s] 已联网后非ReAct格式，当作最终回答", self.name
+                    )
+                    return {
+                        "agent": self.name,
+                        "role": self.role,
+                        "result": stripped,
+                        "tool_calls": tool_calls_log,
+                        "iterations": iteration + 1,
+                        "usage": usage_acc.to_dict(),
+                    }
 
                 if consecutive_parse_failures >= 2:
                     _log.warning(
