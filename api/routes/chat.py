@@ -13,7 +13,13 @@ from api.deps import get_agent_app
 from api.schemas import ChatRequest, ChatResponse
 from application.services.agent_application import AgentApplication
 from domain.run import RequestContext
-from observability.tracing import new_request_id, set_request_id, trace
+from observability.tracing import (
+    new_request_id,
+    set_request_id,
+    timed,
+    trace,
+    trace_error,
+)
 from shared.errors import AppError
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -87,14 +93,30 @@ async def chat(
 ) -> ChatResponse:
     rid = request.headers.get("x-request-id") or new_request_id()
     set_request_id(rid)
-    trace("chat", mode=req.mode, tenant_id=user.tenant_id)
     scoped = _scoped_chat_request(req, user)
-    try:
-        answer, extra = await _dispatch(app, scoped, tenant_id=user.tenant_id)
-    except AppError:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    with timed(
+        "chat",
+        mode=req.mode,
+        tenant_id=user.tenant_id,
+        session_id=req.session_id,
+        user_id=user.user_id,
+        msg_len=len(req.message or ""),
+    ) as bag:
+        try:
+            answer, extra = await _dispatch(
+                app, scoped, tenant_id=user.tenant_id
+            )
+        except AppError:
+            raise
+        except Exception as e:
+            trace_error(
+                "chat_dispatch_error",
+                e,
+                mode=req.mode,
+                tenant_id=user.tenant_id,
+            )
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        bag["answer_len"] = len(answer or "")
 
     meta = _response_meta(req, user, extra)
     meta["request_id"] = rid
@@ -118,6 +140,14 @@ async def chat_stream(
     set_request_id(rid)
     scoped = _scoped_chat_request(req, user)
     ctx = _to_context(scoped, tenant_id=user.tenant_id)
+    trace(
+        "chat_stream_accept",
+        mode=req.mode,
+        tenant_id=user.tenant_id,
+        session_id=req.session_id,
+        user_id=user.user_id,
+        msg_len=len(req.message or ""),
+    )
 
     async def event_generator():
         try:
@@ -159,8 +189,19 @@ async def chat_stream(
                 "tenant_usage": usage_meta.get("tenant_usage"),
                 "task_plan": usage_meta.get("task_plan"),
             }
+            trace(
+                "chat_stream_done",
+                mode=req.mode,
+                answer_len=len(answer or ""),
+            )
             yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
         except Exception as e:
+            trace_error(
+                "chat_stream_error",
+                e,
+                mode=req.mode,
+                tenant_id=user.tenant_id,
+            )
             err = {"detail": str(e)}
             yield f"event: error\ndata: {json.dumps(err, ensure_ascii=False)}\n\n"
 

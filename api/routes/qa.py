@@ -16,8 +16,10 @@ from application.qa.serialize import case_out, member_out, project_out, run_out
 from application.qa.service import QaApplication
 from domain.qa import ALLOWED_ROLES
 from e2e.url_guard import E2EUrlError
+from utils.logger import get_logger
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
+_log = get_logger("nexora.qa")
 
 
 def _app(user: AuthUser) -> QaApplication:
@@ -256,6 +258,14 @@ async def run_ui(
     """SSE：每步一条 data JSON，最后一条 type=done（含落盘后的 run）。"""
     app = _app(user)
 
+    _log.info(
+        "QA UI 运行开始 project_id=%s tenant_id=%s user=%s base_url=%s",
+        project_id,
+        user.tenant_id,
+        user.user_id,
+        (body.base_url or "")[:120],
+    )
+
     async def _gen():
         try:
             async for ev in app.iter_ui_run(
@@ -264,8 +274,20 @@ async def run_ui(
                 base_url=body.base_url,
                 goal=body.goal,
             ):
+                if isinstance(ev, dict) and ev.get("type") in (
+                    "done",
+                    "error",
+                    "step",
+                ):
+                    _log.debug(
+                        "QA UI 事件 project_id=%s type=%s",
+                        project_id,
+                        ev.get("type"),
+                    )
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+            _log.info("QA UI 运行结束 project_id=%s", project_id)
         except FileNotFoundError:
+            _log.warning("QA UI 项目不存在 project_id=%s", project_id)
             yield (
                 "data: "
                 + json.dumps(
@@ -279,6 +301,11 @@ async def run_ui(
                 + "\n\n"
             )
         except E2EUrlError as exc:
+            _log.warning(
+                "QA UI URL 校验失败 project_id=%s detail=%s",
+                project_id,
+                exc,
+            )
             yield (
                 "data: "
                 + json.dumps(
@@ -292,6 +319,9 @@ async def run_ui(
                 + "\n\n"
             )
         except ValueError as exc:
+            _log.warning(
+                "QA UI 参数错误 project_id=%s detail=%s", project_id, exc
+            )
             yield (
                 "data: "
                 + json.dumps(
@@ -305,6 +335,9 @@ async def run_ui(
                 + "\n\n"
             )
         except Exception as exc:  # noqa: BLE001
+            _log.exception(
+                "QA UI 运行异常 project_id=%s: %s", project_id, exc
+            )
             yield (
                 "data: "
                 + json.dumps(

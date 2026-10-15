@@ -95,18 +95,28 @@ class DeepSeekChatModel(BaseChatModel):
         client = OpenAI(api_key=api_key, base_url=api_base, timeout=120.0)
         formatted_messages = [_convert_message_to_dict(msg) for msg in messages]
         logger.info(
-            "DeepSeek 调用: model=%s messages=%s",
+            "DeepSeek 调用开始: model=%s base=%s messages=%s max_tokens=%s",
             self.model_name,
+            api_base,
             len(formatted_messages),
+            self.max_tokens,
         )
 
-        response = client.chat.completions.create(
-            model=self.model_name,
-            messages=formatted_messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stop=stop,
-        )
+        try:
+            response = client.chat.completions.create(
+                model=self.model_name,
+                messages=formatted_messages,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stop=stop,
+            )
+        except Exception:
+            logger.exception(
+                "DeepSeek API 调用失败 model=%s messages=%s",
+                self.model_name,
+                len(formatted_messages),
+            )
+            raise
 
         prompt_tokens, completion_tokens = _usage_fields(
             getattr(response, "usage", None)
@@ -123,6 +133,13 @@ class DeepSeekChatModel(BaseChatModel):
             raise ValueError(
                 "模型返回空内容，请重试或检查模型名 / API Key / 额度"
             )
+        logger.info(
+            "DeepSeek 调用成功: model=%s prompt_tokens=%s completion_tokens=%s content_len=%s",
+            self.model_name,
+            prompt_tokens,
+            completion_tokens,
+            len(content),
+        )
         message = AIMessage(
             content=content,
             usage_metadata={
@@ -184,7 +201,7 @@ class DeepSeekChatModel(BaseChatModel):
             delta = event.choices[0].delta
             text = getattr(delta, "content", None) or ""
             if not text:
-                continue
+                continue # 如果delta没有content，则跳过
             chunk = ChatGenerationChunk(message=AIMessageChunk(content=text))
             if run_manager:
                 run_manager.on_llm_new_token(text)

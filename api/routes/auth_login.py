@@ -12,8 +12,10 @@ from api.auth.jwt_auth import create_access_token
 from api.auth.user_store import authenticate, create_user
 from config.settings import get_settings
 from safety.http_rate_limit import allow_request
+from utils.logger import get_logger
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+_log = get_logger("nexora.auth")
 
 # 租户目录只保留字母数字和 _-。中文用户名会被滤成 default，所有人挤进同一租户。
 _USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{2,31}$")
@@ -49,14 +51,23 @@ class AuthTokenResponse(BaseModel):
 async def login(req: LoginRequest, request: Request) -> AuthTokenResponse:
     settings = get_settings()
     ip = client_ip(request)
+    username = req.username.strip()
     if not await allow_request(f"login:{ip}", settings.login_rate_limit, 60):
+        _log.warning("登录限流 username=%s ip=%s", username, ip)
         raise HTTPException(status_code=429, detail="登录尝试过多，请稍后再试")
 
-    user = authenticate(req.username.strip(), req.password)
+    user = authenticate(username, req.password)
     if user is None:
+        _log.warning("登录失败 username=%s ip=%s", username, ip)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = create_access_token(subject=user.username, tenant_id=user.tenant_id)
+    _log.info(
+        "登录成功 username=%s tenant_id=%s ip=%s",
+        user.username,
+        user.tenant_id,
+        ip,
+    )
     return AuthTokenResponse(
         access_token=token,
         token_type="bearer",
@@ -81,9 +92,21 @@ async def register(req: RegisterRequest, request: Request) -> AuthTokenResponse:
         # 用户名即租户号，知识库和用量按人分开
         user = create_user(req.username, req.password, tenant_id=req.username)
     except ValueError as exc:
+        _log.warning(
+            "注册冲突 username=%s ip=%s detail=%s",
+            req.username,
+            ip,
+            exc,
+        )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     token = create_access_token(subject=user.username, tenant_id=user.tenant_id)
+    _log.info(
+        "注册成功 username=%s tenant_id=%s ip=%s",
+        user.username,
+        user.tenant_id,
+        ip,
+    )
     return AuthTokenResponse(
         access_token=token,
         token_type="bearer",

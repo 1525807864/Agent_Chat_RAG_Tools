@@ -1,4 +1,4 @@
-"""P0: 创建可用的 Embeddings，禁止误用 DeepSeek Chat Base。"""
+""" 创建可用的 Embeddings"""
 
 from __future__ import annotations
 

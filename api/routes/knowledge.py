@@ -20,8 +20,10 @@ from application.jobs.kb_jobs import enqueue_kb_build, get_job
 from application.services.agent_application import AgentApplication
 from application.tenancy import tenant_docs_dir
 from shared.errors import AppError
+from utils.logger import get_logger
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+_log = get_logger("nexora.knowledge")
 #允许上传的后缀(与DocumentLoader.SUPPORTED_SUFFIXES对齐)
 ALLOWED_UPLOAD_SUFFIXES = {
     ".pdf", ".txt", ".md", ".html", ".csv", ".json", ".docx", ".xlsx",
@@ -46,14 +48,25 @@ async def build_knowledge_base(
         raw_dir = str(docs_root.relative_to(get_project_root())).replace("\\", "/")
     except ValueError:
         raw_dir = str(docs_root)
+    _log.info(
+        "同步建库开始 tenant_id=%s docs_dir=%s",
+        user.tenant_id,
+        raw_dir,
+    )
     try:
-        count = app.build_knowledge_base(raw_dir,tenant_id=user.tenant_id)
+        count = app.build_knowledge_base(raw_dir, tenant_id=user.tenant_id)
     except AppError:
-        raise #业务错误原样抛给异常处理器
+        raise  # 业务错误原样抛给异常处理器
     except Exception as e:
-        raise HTTPException(status_code=500,detail=str(e)) from e
-    
-    #空库：给人类可读提示 
+        _log.exception(
+            "同步建库失败 tenant_id=%s docs_dir=%s", user.tenant_id, raw_dir
+        )
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _log.info(
+        "同步建库完成 tenant_id=%s chunks=%s", user.tenant_id, count
+    )
+    # 空库：给人类可读提示
     if count == 0:
         message = (
             f"目录存在但未解析到任何文档块(tenant={user.tenant_id})。"
