@@ -603,9 +603,12 @@ class IntentGuardService:
     async def close_turn(
         self, *, user_input: str, answer: str
     ) -> tuple[str, dict[str, Any]]:
-        """回合收尾：完成度校验 + 按需在答案尾部追加【未完成任务清单】。
+        """回合收尾：完成度校验；未完成清单只写入 meta，不污染 answer。
 
-        返回 (最终答案, meta)（meta 含 task_plan 快照，供响应/SSE done 帧用）。
+        返回 (最终答案, meta)：
+        - answer：用户可见正文（评测 / Judge 只看这个）
+        - meta.task_plan：任务计划快照
+        - meta.open_tasks_notice：可选清单文案（前端自行渲染）
         """
         try:
             plan = self._get_plan()
@@ -622,12 +625,14 @@ class IntentGuardService:
             and fin.get("verdict") != "complete"
             and fin.get("open_tasks")
         ):
-            lines = ["\n\n---", "【未完成任务清单】"]
+            lines = ["【未完成任务清单】"]
             for i, t in enumerate(fin["open_tasks"], start=1):
                 status_cn = TASK_STATUS_CN.get(t.get("status"), "待办")
                 lines.append(f"{i}. {t.get('title', '')}（{status_cn}）")
             lines.append('需要继续时可说"继续完成剩余任务"。')
-            return answer + "\n".join(lines), meta
+            meta["open_tasks_notice"] = "\n".join(lines)
+            meta["open_tasks"] = fin.get("open_tasks")
+            # 故意不把 notice 拼进 answer，避免破坏「一句话」等格式约束
         return answer, meta
 
     # ------------------------------------------------------------------ 只读

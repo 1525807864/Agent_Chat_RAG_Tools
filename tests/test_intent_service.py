@@ -313,8 +313,9 @@ async def test_close_turn_appends_open_tasks_notice():
     await g.ensure_anchor(user_input="写报告")
     await asyncio.sleep(0.05)
     answer, meta = await g.close_turn(user_input="写报告", answer="初稿完成")
-    assert "【未完成任务清单】" in answer
-    assert answer.startswith("初稿完成")
+    # 清单只进 meta，不再污染 answer 正文
+    assert answer == "初稿完成"
+    assert "【未完成任务清单】" in (meta.get("open_tasks_notice") or "")
     assert meta.get("task_plan") is not None
 
 
