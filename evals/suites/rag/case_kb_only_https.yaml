@@ -1,0 +1,21 @@
+# RAG 紧扣夹具：跑前把 evals/fixtures/kb_min 灌入 tenant=eval
+id: rag_kb_only_https
+domain: E3
+tags: [p1, rag, hard]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: rag
+  message: "根据知识库：HTTPS 相对 HTTP 多了什么？禁止使用库外知识。"
+  tenant_id: eval
+expect:
+  must_contain: ["TLS", "SSL", "加密"]
+  match_any_of_must_contain: true
+judge:
+  type: rubric_llm
+  threshold: 0.8
+  criteria: >
+    答案应紧扣夹具（TLS/SSL/加密）。大段百科扩写、与夹具无关细节则低分。
+trajectory:
+  expected_tools: []
+  match_mode: subset

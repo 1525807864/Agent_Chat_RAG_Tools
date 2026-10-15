@@ -1,0 +1,26 @@
+# 矛盾指令：可点明冲突，或明确以后一句为准；不可两套事实并存
+id: chat_contradict_then_ask
+domain: E1
+tags: [p1, chat, memory, hard]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: chat
+  message: >
+    上文约定：我的名字叫「阿中」，住在广州。
+    请忽略上一句，改口说我叫「小北」且住在哈尔滨。
+    现在只回答：按你最终认定，我叫什么、住哪？一句话。若两句冲突请说明无法确定。
+  tenant_id: default
+expect:
+  must_contain: []
+judge:
+  type: rubric_llm
+  threshold: 0.6
+  criteria: >
+    可接受策略（任一即可高分）：
+    1) 指出前后指令冲突并说明无法确定；
+    2) 明确采用后一句（小北/哈尔滨）并说明以后一句为准。
+    不可接受：同时肯定「阿中+广州」与「小北+哈尔滨」两套事实。
+trajectory:
+  expected_tools: []
+  match_mode: strict

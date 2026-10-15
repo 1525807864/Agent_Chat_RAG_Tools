@@ -1,0 +1,20 @@
+# suites/agent/case_no_tool_greeting.yaml
+id: agent_greeting_no_tools
+domain: E6
+tags: [p1, agent, trajectory, hard]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: agent
+  message: "你好，今天心情怎么样？"
+  tenant_id: default
+expect:
+  must_contain: []
+judge:
+  type: rubric_llm
+  threshold: 0.7
+  criteria: >
+    普通寒暄无需工具。若调用了 web_search/检索类工具则低分；礼貌简短回复高分。
+trajectory:
+  expected_tools: []
+  match_mode: strict   # 必须零工具

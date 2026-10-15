@@ -1,0 +1,20 @@
+# RAG 知识边界：夹具无营收信息，须拒答而非编造数字
+id: rag_out_of_kb_refuse
+domain: E3
+tags: [p1, rag, hard]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: rag
+  message: "知识库里写了本公司 2024 年营收多少？只根据知识库答。"
+  tenant_id: eval
+expect:
+  must_contain: ["没有", "未找到", "不知道", "无法", "未提及", "不包含"]
+  match_any_of_must_contain: true
+judge:
+  type: deterministic
+  threshold: 1.0
+  criteria: ""
+trajectory:
+  expected_tools: []
+  match_mode: subset

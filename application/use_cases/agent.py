@@ -73,6 +73,7 @@ class AgentUseCase:
                 model=str(usage_dict.get("model") or ""),
             )
             usage_meta = safe_record_turn(self._app, tenant_id, turn)
+        # intent_meta 可含 tool_names（评测轨迹用）；不影响答案语义
         return RunResult(
             answer=answer,
             meta={"capability": "agent", **usage_meta, **intent_meta},
@@ -246,6 +247,20 @@ class AgentUseCase:
             "rewrite_meta": rewrite_meta,
         }
 
+        def _tool_meta(result: dict | None) -> dict:
+            """从 ReAct result['tool_calls'] 抽出工具名，供评测 / 审计读 meta。"""
+            names: list[str] = []
+            raw_calls = (result or {}).get("tool_calls") if isinstance(result, dict) else None
+            if isinstance(raw_calls, list):
+                for item in raw_calls:
+                    if isinstance(item, dict):
+                        n = item.get("tool") or item.get("name") or item.get("tool_name")
+                        if n:
+                            names.append(str(n))
+                    elif isinstance(item, str) and item.strip():
+                        names.append(item.strip())
+            return {"tool_names": names, "tool_calls": raw_calls or []}
+
         async def _finalize_intent(answer: str) -> tuple[str, dict]:
             """回合后完成度校验：闭环子任务；按需追加未完成清单。
 
@@ -340,7 +355,8 @@ class AgentUseCase:
                     answer = result.get("result", "无结果")
                     answer, intent_meta = await _finalize_intent(answer)
                     await _persist_answer(answer, result if isinstance(result, dict) else None)
-                    return answer, usage if isinstance(usage, dict) else None, intent_meta
+                    meta = {**_tool_meta(result if isinstance(result, dict) else None), **intent_meta}
+                    return answer, usage if isinstance(usage, dict) else None, meta
             except Exception as e:  # noqa: BLE001
                 app.logger.error("Playwright MCP 失败: %s", e)
                 try:
@@ -383,8 +399,9 @@ class AgentUseCase:
             answer = result.get("result", "无结果")
             answer, intent_meta = await _finalize_intent(answer)
             await _persist_answer(answer, result if isinstance(result, dict) else None)
+            meta = {**_tool_meta(result if isinstance(result, dict) else None), **intent_meta}
             return (
                 answer,
                 usage if isinstance(usage, dict) else None,
-                intent_meta,
+                meta,
             )

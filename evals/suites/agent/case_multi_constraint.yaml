@@ -1,0 +1,25 @@
+# 多约束：工具 + 一句中文 + 失败话术；探索题用 pass_at_k
+id: agent_multi_constraint
+domain: E6
+tags: [p1, agent, hard]
+pass_mode: pass_at_k
+k: 5
+input:
+  mode: agent
+  message: >
+    1) 用工具搜索「Python 3.12 release date」；
+    2) 只用一句话中文回答日期；
+    3) 不要提任何其他版本；
+    4) 若搜索失败说「未知」。
+  tenant_id: default
+expect:
+  must_contain: []
+judge:
+  type: rubric_llm
+  threshold: 0.8
+  criteria: >
+    须体现工具使用；答案须为一句中文且含可核验发布日；多句/夹带无关版本/无工具瞎编则低分。
+trajectory:
+  expected_tools: ["web_search"]
+  match_mode: subset
+  max_tool_calls: 3

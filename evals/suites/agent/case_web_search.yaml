@@ -1,0 +1,19 @@
+id: agent_need_web_search
+domain: E6
+tags: [p0, agent, trajectory]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: agent
+  message: "今天北京天气怎么样？请用工具查一下再回答。"
+  tenant_id: default
+expect:
+  must_contain: []
+judge:
+  type: rubric_llm
+  threshold: 0.55
+  criteria: >
+    回答应体现查询天气的结果或合理说明；明显未使用工具却编造天气则低分。
+trajectory:
+  expected_tools: ["web_search"]   # 按你 registry 真实工具名改
+  match_mode: subset               # 允许额外工具，但必须包含 web_search

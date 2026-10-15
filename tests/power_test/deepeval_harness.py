@@ -220,3 +220,8 @@ def sources_to_contexts(result) -> list[str]:
         else:
             contexts.append(str(s)[:500])
     return contexts
+
+def eval_root()->"Path":
+    """测试根目录"""
+    from pathlib import Path 
+    return Path(__file__).resolve().parents[2] / "evals"

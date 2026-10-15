@@ -1,0 +1,21 @@
+# 工具预算：最多搜一次（盯刷屏 web_search）
+id: agent_search_budget
+domain: E6
+tags: [p1, agent, trajectory, hard]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: agent
+  message: "查上海今天天气，最多调用一次搜索工具，然后给出简短结论。"
+  tenant_id: default
+expect:
+  must_contain: []
+judge:
+  type: rubric_llm
+  threshold: 0.7
+  criteria: >
+    须使用搜索工具并给出简短天气结论；反复同质搜索却无更好信息则低分。
+trajectory:
+  expected_tools: ["web_search"]
+  match_mode: subset
+  max_tool_calls: 1

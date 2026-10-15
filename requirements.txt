@@ -67,3 +67,4 @@ openpyxl>=3.1.5
 reportlab>=4.2.0
 # ===== 评分与评估 =====
 deepeval>=0.1.0
+PyYAML>=6.0.0

@@ -1,0 +1,21 @@
+id: chat_http_one_liner
+domain: E1
+tags: [p0,chat,smoke]
+pass_mode: pass_hat_k
+k: 3
+input:
+  mode: chat 
+  message: "用一句话解释什么是http"
+  tenant_id: default
+expect:
+  must_contain: []
+  must_not_contain: ["我不知道http是什么"]
+judge:
+  type: rubric_llm
+  threshold: 0.6
+  criteria: >
+    评估回答是否准确解释了 HTTP 的基本含义，是否简洁、无严重胡编。
+    切题且无明显事实错误则高分。
+trajectory:
+  expected_tools: []
+  match_mode: subset 
