@@ -1,16 +1,22 @@
-"""安全响应头 + 就绪门闩。
+"""安全响应头 + 就绪门闩 + 请求访问日志。
 
 全站 /api IP 限流已关闭；登录/注册限流见 ``api/routes/auth_login.py``。
 """
 
 from __future__ import annotations
 
+import logging
+import time
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from observability.tracing import get_request_id, new_request_id, set_request_id
+
 # /health、/health/live、/health/ready 都以 /health 开头，一并放行
 _SKIP_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json")
+_access_log = logging.getLogger("nexora.access")
 
 
 class ReadinessGateMiddleware(BaseHTTPMiddleware):
@@ -26,6 +32,12 @@ class ReadinessGateMiddleware(BaseHTTPMiddleware):
         from api.health_state import health_state
 
         if not health_state.ready:
+            _access_log.warning(
+                "拒绝未就绪请求 method=%s path=%s startup_error=%s",
+                request.method,
+                path,
+                health_state.startup_error,
+            )
             return JSONResponse(
                 status_code=503,
                 content={
@@ -35,6 +47,48 @@ class ReadinessGateMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "3"},
             )
         return await call_next(request)
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """为每个 HTTP 请求打访问日志（含耗时、状态码、request_id）。
+
+    /health* 仅 DEBUG，避免探活刷屏。
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        path = request.url.path
+        rid = request.headers.get("x-request-id") or new_request_id()
+        set_request_id(rid)
+        t0 = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            response.headers.setdefault("X-Request-Id", rid)
+            return response
+        except Exception:
+            _access_log.exception(
+                "request_id=%s method=%s path=%s 未捕获异常",
+                rid,
+                request.method,
+                path,
+            )
+            raise
+        finally:
+            ms = round((time.perf_counter() - t0) * 1000, 1)
+            quiet = path.startswith("/health")
+            line = (
+                "request_id=%s method=%s path=%s status=%s elapsed_ms=%s"
+                % (get_request_id() or rid, request.method, path, status, ms)
+            )
+            if quiet:
+                _access_log.debug(line)
+            elif status >= 500:
+                _access_log.error(line)
+            elif status >= 400:
+                _access_log.warning(line)
+            else:
+                _access_log.info(line)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

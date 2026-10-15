@@ -8,8 +8,11 @@ from typing import TYPE_CHECKING, AsyncIterator
 from application.routing.handoff import try_cursor_answer
 from domain.run import RequestContext, RunResult, StreamEvent
 from observability.langsmith_trace import langsmith_turn
-from observability.tracing import trace
+from observability.tracing import timed, trace, trace_error, trace_warn
 from orchestration.capabilities import Capability, default_capabilities
+from utils.logger import get_logger
+
+_log = get_logger("nexora.orchestrator")
 
 if TYPE_CHECKING:
     from application.services.agent_application import AgentApplication
@@ -30,7 +33,16 @@ class ChatOrchestrator:
     async def handle(self, ctx: RequestContext) -> RunResult:
         """返回统一 RunResult；未知 mode 抛 ValueError（由 API 转 400）。"""
         with langsmith_turn(ctx, name="chat.handle"):
-            return await self._handle_body(ctx)
+            with timed(
+                "orchestrator_handle",
+                mode=ctx.mode,
+                tenant_id=ctx.tenant_id,
+                session_id=ctx.session_id,
+            ) as bag:
+                result = await self._handle_body(ctx)
+                bag["answer_len"] = len(result.answer or "")
+                bag["capability"] = (result.meta or {}).get("capability")
+                return result
 
     async def _handle_body(self, ctx: RequestContext) -> RunResult:
         cursor = await self._try_cursor(ctx)
@@ -107,15 +119,23 @@ class ChatOrchestrator:
         )
 
     async def _try_cursor(self, ctx: RequestContext) -> RunResult | None:
-        cursor = await try_cursor_answer(
-            mode=ctx.mode,
-            message=ctx.message,
-            session_id=ctx.session_id,
-            tenant_id=ctx.tenant_id,
-            api_key=self._app.settings.cursor_api_key,
-            model=self._app.settings.cursor_model,
-            workspace_root=ctx.workspace_root,
-        )
+        try:
+            cursor = await try_cursor_answer(
+                mode=ctx.mode,
+                message=ctx.message,
+                session_id=ctx.session_id,
+                tenant_id=ctx.tenant_id,
+                api_key=self._app.settings.cursor_api_key,
+                model=self._app.settings.cursor_model,
+                workspace_root=ctx.workspace_root,
+            )
+        except Exception as exc:  # noqa: BLE001
+            trace_warn(
+                "orchestrator_cursor_error",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+            return None
         if cursor is None:
             return None
         answer, cursor_meta = cursor
@@ -134,6 +154,7 @@ class ChatOrchestrator:
             )
         except Exception:  # noqa: BLE001
             usage_meta = {}
+            _log.warning("Cursor 用量记账失败", exc_info=True)
         trace("orchestrator_cursor", reason=cursor_meta.get("route_reason"))
         return RunResult(
             answer=answer,
@@ -143,6 +164,7 @@ class ChatOrchestrator:
     async def _run_capability(self, ctx: RequestContext) -> RunResult:
         cap = self._caps.get(ctx.mode)
         if cap is None:
+            trace_error("orchestrator_unknown_mode", mode=ctx.mode)
             raise ValueError(f"未知 mode: {ctx.mode}")
 
         if ctx.mode != "agent" and ctx.files:
@@ -154,8 +176,18 @@ class ChatOrchestrator:
                 build_files_prefix(ctx.files) + "用户请求：\n" + ctx.message
             )
             ctx = replace(ctx, message=prefixed)
+            trace("orchestrator_files_prefixed", files=len(ctx.files or []))
 
-        result = await cap.run(self._app, ctx)
+        try:
+            result = await cap.run(self._app, ctx)
+        except Exception as exc:
+            trace_error(
+                "orchestrator_capability_failed",
+                exc,
+                mode=ctx.mode,
+                tenant_id=ctx.tenant_id,
+            )
+            raise
         # chat 已在 UseCase 记账；其它 mode 暂记请求次数（后续可补 token）
         if ctx.mode != "chat" and "usage" not in (result.meta or {}):
             try:
@@ -169,6 +201,10 @@ class ChatOrchestrator:
                 )
                 result = result.with_meta(**extra)
             except Exception:  # noqa: BLE001
-                pass
-        trace("orchestrator_capability", mode=ctx.mode)
+                _log.warning("Capability 用量记账失败 mode=%s", ctx.mode, exc_info=True)
+        trace(
+            "orchestrator_capability",
+            mode=ctx.mode,
+            answer_len=len(result.answer or ""),
+        )
         return result

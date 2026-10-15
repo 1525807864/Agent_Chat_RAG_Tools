@@ -49,8 +49,10 @@ from api.health_checks import critical_ok, run_readiness_checks_async
 from api.health_state import DependencyCheck, health_state
 from api.middleware import (
     ReadinessGateMiddleware,
+    RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
 )
+from utils.logger import configure_logging, get_logger
 from api.schemas import (
     HealthResponse,
     LiveHealthResponse,
@@ -85,44 +87,68 @@ def _to_ready_items(checks: list[DependencyCheck]) -> list[ReadyCheckItem]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """启动闭环：mark_starting → 初始化 → readiness → mark_ready/failed → yield → 清理。"""
-    health_state.mark_starting()
     settings = get_settings()
+    configure_logging(level=settings.log_level, log_file="data/app.log")
+    log = get_logger("nexora.startup")
+    health_state.mark_starting()
+    log.info(
+        "应用启动开始 auth_enabled=%s memory_backend=%s auth_backend=%s",
+        settings.auth_enabled,
+        settings.memory_backend,
+        settings.auth_backend,
+    )
 
     try:
         assert_auth_config(settings)
+        log.info("鉴权配置校验通过")
         try:
             from observability.langsmith_trace import configure_langsmith
 
             configure_langsmith(settings)
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("LangSmith 配置失败（已忽略，不影响启动）")
         init_user_store()
+        log.info("用户存储已初始化")
         # P0–P2：若 MySQL 可达则幂等建表（本机无库时静默跳过）
         try:
             from infrastructure.db.schema import ensure_all_schemas
 
             ensure_all_schemas()
+            log.info("MySQL schema 检查完成（或已跳过）")
         except Exception:  # noqa: BLE001
-            pass
+            log.warning("MySQL schema 跳过/失败", exc_info=True)
         await init_http_rate_limiter()
+        log.info("HTTP 限流器已初始化 backend=%s", settings.rate_limit_backend)
         await init_agent_app()
+        log.info("AgentApplication 已初始化")
         # reload / 重启后清理僵尸建库任务（防前端一直显示 10%）
         try:
             from application.jobs.kb_jobs import fail_stale_running_jobs
 
-            fail_stale_running_jobs(max_age_seconds=60)
+            n = fail_stale_running_jobs(max_age_seconds=60)
+            log.info("清理僵尸建库任务 done count=%s", n)
         except Exception:  # noqa: BLE001
-            pass
+            log.warning("清理僵尸建库任务失败", exc_info=True)
 
         checks = await run_readiness_checks_async()
+        for c in checks:
+            log.info(
+                "readiness check name=%s ok=%s detail=%s latency_ms=%s",
+                c.name,
+                c.ok,
+                c.detail,
+                c.latency_ms,
+            )
         if not critical_ok(checks):
             bad = [c.name for c in checks if not c.ok]
             health_state.mark_failed(
                 error=f"critical checks failed: {bad}",
                 checks=checks,
             )
+            log.error("应用未就绪 critical_failed=%s", bad)
         else:
             health_state.mark_ready(checks=checks)
+            log.info("应用就绪 ready_at=%s", health_state.ready_at)
 
         # 平台沙箱：恢复落盘会话 + 空闲回收
         import asyncio
@@ -136,6 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 sweep_and_reap_forever(), name="sandbox-reaper"
             )
         except Exception:  # noqa: BLE001
+            log.warning("sandbox reaper 未启动", exc_info=True)
             reaper_task = None
 
         # Ops 交互终端：回收过期 / 已死的 ttyd 进程
@@ -147,15 +174,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     try:
                         n = await get_ttyd_manager().reap_expired()
                         if n:
-                            import logging
-
-                            logging.getLogger("nexora.ops.ttyd").info(
+                            get_logger("nexora.ops.ttyd").info(
                                 "reaped %s terminals", n
                             )
                     except Exception:  # noqa: BLE001
-                        import logging
-
-                        logging.getLogger("nexora.ops.ttyd").exception(
+                        get_logger("nexora.ops.ttyd").exception(
                             "ttyd reap failed"
                         )
                     await asyncio.sleep(30)
@@ -163,12 +186,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             ttyd_reaper_task = asyncio.create_task(
                 _ttyd_reap_forever(), name="ttyd-reaper"
             )
+            log.info("ttyd reaper 已启动")
         except Exception:  # noqa: BLE001
+            log.warning("ttyd reaper 未启动", exc_info=True)
             ttyd_reaper_task = None
 
         try:
             yield
         finally:
+            log.info("应用关闭中…")
             for task in (ttyd_reaper_task, reaper_task):
                 if task is not None:
                     task.cancel()
@@ -177,9 +203,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     except asyncio.CancelledError:
                         pass
             health_state.mark_not_ready()
+            log.info("应用已标记 not_ready")
             await shutdown_http_rate_limiter()
             await shutdown_agent_app()
     except Exception as e:
+        get_logger("nexora.startup").exception("应用启动失败: %s", e)
         health_state.mark_failed(error=str(e))
         raise
 
@@ -204,9 +232,10 @@ app = FastAPI(
 
 register_exception_handlers(app)
 
-# 后 add 的中间件更靠外：CORS → 安全头 → 就绪门闩 → 路由
+# 后 add 的中间件更靠外：CORS → 安全头 → 访问日志 → 就绪门闩 → 路由
 # 全站 /api 限流已关闭；登录/注册限流见 api/routes/auth_login.py
 app.add_middleware(ReadinessGateMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 _hosts = [h.strip() for h in _settings.allowed_hosts.split(",") if h.strip()]
