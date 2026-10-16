@@ -87,10 +87,46 @@ def test_user_store_authenticate(tmp_path, monkeypatch):
     assert authenticate("admin", "admin123456") is not None
     assert authenticate("admin", "nope") is None
     assert authenticate("missing", "admin123456") is None
+    # 用户名必须区分大小写：ADMIN ≠ admin
+    assert authenticate("ADMIN", "admin123456") is None
+    assert authenticate("Admin", "admin123456") is None
     create_user("alice", "alice-pass-1")
     alice = authenticate("alice", "alice-pass-1")
     assert alice is not None
     assert alice.username == "alice"
+    assert authenticate("Alice", "alice-pass-1") is None
+    # create_user 拒绝非法用户名（不入库）
+    with pytest.raises(ValueError, match="用户名须"):
+        create_user("1bad", "password-ok-1")
+    with pytest.raises(ValueError, match="用户名须"):
+        create_user("ab", "password-ok-1")
+    settings_mod._settings = None
+    user_store._initialized = False
+
+
+@pytest.mark.asyncio
+async def test_auth_service_login_case_sensitive(tmp_path, monkeypatch):
+    """应用服务层：正确大小写可登录，错误大小写失败。"""
+    monkeypatch.setenv("AUTH_BACKEND", "sqlite")
+    monkeypatch.setenv("AUTH_USERS_DB_PATH", str(tmp_path / "users_svc.db"))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin123456")
+    settings_mod._settings = None
+    user_store._initialized = False
+    init_user_store()
+
+    from application.auth import AuthError, AuthService
+
+    svc = AuthService()
+    ok = await svc.login(
+        username="admin", password="admin123456", client_ip="127.0.0.1"
+    )
+    assert ok.user_id == "admin"
+    with pytest.raises(AuthError) as ei:
+        await svc.login(
+            username="ADMIN", password="admin123456", client_ip="127.0.0.1"
+        )
+    assert ei.value.code == "unauthorized"
     settings_mod._settings = None
     user_store._initialized = False
 

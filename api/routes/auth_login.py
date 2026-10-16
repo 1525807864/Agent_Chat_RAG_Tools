@@ -1,28 +1,26 @@
-"""登录 / 注册：Argon2 用户表 + 按 IP 限流。租户取自用户记录，不接受客户端伪造。"""
+"""登录 / 注册 HTTP 适配器：校验入参 → 调 AuthService → 映射状态码。"""
 
 from __future__ import annotations
-
-import re
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from api.auth.client_ip import client_ip
-from api.auth.jwt_auth import create_access_token
-from api.auth.user_store import authenticate, create_user
-from config.settings import get_settings
-from safety.http_rate_limit import allow_request
-from utils.logger import get_logger
+from api.auth.username_rules import normalize_new_username
+from application.auth import AuthError, AuthResult, get_auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-_log = get_logger("nexora.auth")
 
-# 租户目录只保留字母数字和 _-。中文用户名会被滤成 default，所有人挤进同一租户。
-_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{2,31}$")
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=128)
     password: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def username_no_casefold(cls, value: str) -> str:
+        """只 strip+格式校验，绝不 lower；大小写由客户端原样提交。"""
+        return normalize_new_username(value)
 
 
 class RegisterRequest(BaseModel):
@@ -32,11 +30,8 @@ class RegisterRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def username_charset(cls, value: str) -> str:
-        """首字母必须是英文，避免 sanitize 后落成共用租户 default。"""
-        name = value.strip()
-        if not _USERNAME_RE.fullmatch(name):
-            raise ValueError("用户名须以字母开头，仅含字母、数字、下划线和中横线，长度 3–32")
-        return name
+        """与 create_user / AuthService 同一规则。"""
+        return normalize_new_username(value)
 
 
 class AuthTokenResponse(BaseModel):
@@ -47,70 +42,49 @@ class AuthTokenResponse(BaseModel):
     tenant_id: str
 
 
+def _to_http(err: AuthError) -> HTTPException:
+    """应用层错误码 → HTTP。"""
+    status = {
+        "unauthorized": 401,
+        "conflict": 409,
+        "rate_limited": 429,
+        "disabled": 404,
+        "invalid": 422,
+    }.get(err.code, 400)
+    return HTTPException(status_code=status, detail=err.message)
+
+
+def _to_response(result: AuthResult) -> AuthTokenResponse:
+    return AuthTokenResponse(
+        access_token=result.access_token,
+        token_type="bearer",
+        auth_enabled=result.auth_enabled,
+        user_id=result.user_id,
+        tenant_id=result.tenant_id,
+    )
+
+
 @router.post("/login", response_model=AuthTokenResponse)
 async def login(req: LoginRequest, request: Request) -> AuthTokenResponse:
-    settings = get_settings()
-    ip = client_ip(request)
-    username = req.username.strip()
-    if not await allow_request(f"login:{ip}", settings.login_rate_limit, 60):
-        _log.warning("登录限流 username=%s ip=%s", username, ip)
-        raise HTTPException(status_code=429, detail="登录尝试过多，请稍后再试")
-
-    user = authenticate(username, req.password)
-    if user is None:
-        _log.warning("登录失败 username=%s ip=%s", username, ip)
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
-
-    token = create_access_token(subject=user.username, tenant_id=user.tenant_id)
-    _log.info(
-        "登录成功 username=%s tenant_id=%s ip=%s",
-        user.username,
-        user.tenant_id,
-        ip,
-    )
-    return AuthTokenResponse(
-        access_token=token,
-        token_type="bearer",
-        auth_enabled=settings.auth_enabled,
-        user_id=user.username,
-        tenant_id=user.tenant_id,
-    )
+    try:
+        result = await get_auth_service().login(
+            username=req.username,
+            password=req.password,
+            client_ip=client_ip(request),
+        )
+    except AuthError as exc:
+        raise _to_http(exc) from exc
+    return _to_response(result)
 
 
 @router.post("/register", response_model=AuthTokenResponse)
 async def register(req: RegisterRequest, request: Request) -> AuthTokenResponse:
-    settings = get_settings()
-    if not settings.allow_register:
-        raise HTTPException(status_code=404, detail="未开放注册")
-
-    ip = client_ip(request)
-    # 与登录分开计数，避免登录失败把注册额度占满
-    if not await allow_request(f"register:{ip}", settings.login_rate_limit, 60):
-        raise HTTPException(status_code=429, detail="尝试过多，请稍后再试")
-
     try:
-        # 用户名即租户号，知识库和用量按人分开
-        user = create_user(req.username, req.password, tenant_id=req.username)
-    except ValueError as exc:
-        _log.warning(
-            "注册冲突 username=%s ip=%s detail=%s",
-            req.username,
-            ip,
-            exc,
+        result = await get_auth_service().register(
+            username=req.username,
+            password=req.password,
+            client_ip=client_ip(request),
         )
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    token = create_access_token(subject=user.username, tenant_id=user.tenant_id)
-    _log.info(
-        "注册成功 username=%s tenant_id=%s ip=%s",
-        user.username,
-        user.tenant_id,
-        ip,
-    )
-    return AuthTokenResponse(
-        access_token=token,
-        token_type="bearer",
-        auth_enabled=settings.auth_enabled,
-        user_id=user.username,
-        tenant_id=user.tenant_id,
-    )
+    except AuthError as exc:
+        raise _to_http(exc) from exc
+    return _to_response(result)
