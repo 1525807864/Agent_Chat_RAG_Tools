@@ -7,11 +7,13 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from api.auth.deps import AuthUser, get_current_user
+from api.auth.access_deps import require_perm
+from api.auth.deps import AuthUser
 from api.auth.session_scope import bind_session_id
 from api.deps import get_agent_app
 from api.schemas import ChatRequest, ChatResponse
 from application.services.agent_application import AgentApplication
+from domain.access import PERM_CHAT_USE
 from domain.run import RequestContext
 from observability.tracing import (
     new_request_id,
@@ -88,7 +90,7 @@ def _response_meta(req: ChatRequest, user: AuthUser, extra: dict | None = None) 
 async def chat(
     req: ChatRequest,
     request: Request,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_CHAT_USE)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> ChatResponse:
     rid = request.headers.get("x-request-id") or new_request_id()
@@ -132,7 +134,7 @@ async def chat(
 async def chat_stream(
     req: ChatRequest,
     request: Request,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_CHAT_USE)),
     app: AgentApplication = Depends(get_agent_app),
 ):
     """SSE：编排层 ``orchestrator.stream``；本层只转 SSE 帧。"""

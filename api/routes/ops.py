@@ -5,15 +5,19 @@
 """
 
 from __future__ import annotations
-
 from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-
+from api.auth.access_deps import require_perm
 from api.auth.deps import AuthUser, get_current_user
-from application.ops.holmes_client import HolmesClient, HolmesError
+from api.deps import get_agent_app
+from application.ops.executor import OpsExecError, ask_on_target
+from application.ops.holmes_client import HolmesClient
+from application.ops.usage import turn_from_holmes
+from application.services.agent_application import AgentApplication
+from billing.turn_helper import safe_record_turn
 from config.settings import get_settings
+from domain.access import PERM_OPS_ASK
 
 router = APIRouter(prefix="/api/ops", tags=["ops"])
 
@@ -40,6 +44,8 @@ class OpsAskBody(BaseModel):
     terminalContext: str | None = Field(default=None, max_length=4000)
     # 可选：关联的沙箱会话 id，便于 Holmes / 审计对照
     sandboxSessionId: str | None = Field(default=None, max_length=64)
+    # 必填：客户项目 ID（来自 GET /api/ops/targets）
+    targetId: str = Field(..., min_length=3, max_length=64)
 
 
 class OpsAskResponse(BaseModel):
@@ -55,7 +61,14 @@ class OpsAskResponse(BaseModel):
     followUpActions: list[Any] = Field(default_factory=list)
     # 原始包（调试用，生产可删）
     raw: dict[str, Any] = Field(default_factory=dict)
-
+    # 用量（前端展示/计费）
+    usage: dict[str, Any] | None = None 
+    # 租户累计用量（前端展示/计费）
+    tenantUsage: dict[str, Any] | None = None 
+    # 关联的目标 id（前端展示/审计）
+    targetId: str | None = None 
+    # 关联的目标名称（前端展示/审计） 
+    targetName: str | None = None 
 
 @router.get("/health")
 async def ops_health(user: AuthUser = Depends(get_current_user)):
@@ -75,11 +88,12 @@ async def ops_health(user: AuthUser = Depends(get_current_user)):
 @router.post("/ask", response_model=OpsAskResponse)
 async def ops_ask(
     body: OpsAskBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_OPS_ASK)),
+    app: AgentApplication = Depends(get_agent_app),
 ):
     """发起一次运维调查（同步等待 Holmes 跑完工具循环）。"""
     _require_holmes_enabled()
-    # P3：把终端观察拼进 ask，避免改 Holmes 协议
+    # 把终端观察拼进 ask，避免改 Holmes 协议
     msg = (body.message or "").strip()
     ctx = (body.terminalContext or "").strip()
     if ctx:
@@ -91,21 +105,34 @@ async def ops_ask(
             f"{ctx}\n"
             f"---"
         )
-    client = HolmesClient()
+    
     try:
-        data = client.ask(
+        target,data = ask_on_target(
+            tenant_id=user.tenant_id,
+            target_id=body.targetId,
             message=msg,
             conversation_history=body.conversation_history,
             model=body.model,
-            # 把 Nexora 登录名传给 Holmes，便于其侧技能/审计（若支持）
             user_id=user.user_id,
-            stream=False,
         )
-    except HolmesError as exc:
-        code = exc.status_code or 502
-        raise HTTPException(status_code=code, detail=str(exc)) from exc
-
+    except OpsExecError as exc:
+        raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
+    # 复用token记账机制
+    # 1) 解析 Holmes JSON → TurnUsage（无 usage 字段时 tokens=0、requests=1）
+    # 2) safe_record_turn：finalize(requests=1) + 写入 app.usage_ledger
+    # 3) 账本 key = JWT 里的 user.tenant_id，才能和 GET /api/billing/usage 对齐
     # Holmes 字段多为 snake_case；这里归一成前端友好的 camelCase
+    model_name = (body.model or  "").strip() or f"ops:{target.id}"
+    turn = turn_from_holmes(
+        data if isinstance(data, dict) else {},
+        model=model_name,
+    )
+    usage_meta = safe_record_turn(
+        app,
+        user.tenant_id,
+        turn,
+        model=model_name,
+    )
     analysis = data.get("analysis") or data.get("answer") or ""
     if not isinstance(analysis, str):
         analysis = str(analysis)
@@ -127,5 +154,11 @@ async def ops_ask(
         conversationHistory=history,
         toolCalls=tools,
         followUpActions=follow,
-        raw=data,
+        raw=data if isinstance(data, dict) else {},
+        # 模型字段名是 camelCase（与前端 OpsAskResult 对齐）
+        # recorder 返回的 dict key 仍是 snake_case：tenant_usage
+        usage=usage_meta.get("usage"),
+        tenantUsage=usage_meta.get("tenant_usage"),
+        targetId=target.id,
+        targetName=target.name,
     )

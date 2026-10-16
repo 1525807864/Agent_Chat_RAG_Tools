@@ -1,0 +1,113 @@
+# 后台任务消费者：与 api 同镜像，只跑 python -m worker.run_jobs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: nexora
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      initContainers:
+        - name: wait-mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_ROOT_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              echo "waiting for mysql"
+              i=0
+              while ! mysqladmin ping -h mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --silent; do
+                i=$((i+1))
+                if [ "$i" -gt 60 ]; then
+                  echo "timeout waiting for mysql"
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "mysql is ready"
+      containers:
+        - name: worker
+          image: langchain_demo-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "worker.run_jobs"]
+          env:
+            - name: AUTH_ENABLED
+              value: "true"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: MEMORY_BACKEND
+              value: "redis"
+            - name: AUTH_BACKEND
+              value: "mysql"
+            - name: MYSQL_HOST
+              value: "mysql"
+            - name: MYSQL_PORT
+              value: "3306"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_USER
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_PASSWORD
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_DATABASE
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: JWT_SECRET
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_KEY
+            - name: DEEPSEEK_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_BASE
+                  optional: true
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_API_KEY
+            - name: EMBEDDING_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_API_BASE
+            - name: EMBEDDING_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: EMBEDDING_MODEL
+            - name: SANDBOX_ENABLED
+              value: "false"
+          volumeMounts:
+            - name: app-data
+              mountPath: /app/data
+      volumes:
+        - name: app-data
+          emptyDir: {}

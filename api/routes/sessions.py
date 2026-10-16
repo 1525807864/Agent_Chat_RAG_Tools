@@ -2,7 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.auth.deps import AuthUser, get_current_user
+from api.auth.access_deps import require_perm
+from api.auth.deps import AuthUser
+from domain.access import PERM_SESSION_READ, PERM_SESSION_WRITE
 from api.auth.session_scope import bind_session_id, public_session_id
 from api.deps import get_agent_app
 from api.schemas import (
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 @router.get("", response_model=SessionListResponse)
 async def list_sessions(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_SESSION_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionListResponse:
     try:
@@ -39,7 +41,7 @@ async def list_sessions(
 @router.get("/{session_id}/memory", response_model=SessionMemoryResponse)
 async def get_session_memory(
     session_id: str,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_SESSION_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionMemoryResponse:
     scoped = bind_session_id(user.tenant_id, session_id)
@@ -103,7 +105,7 @@ async def get_session_memory(
 @router.get("/{session_id}", response_model=SessionHistoryResponse)
 async def get_session_history(
     session_id: str,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_SESSION_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> SessionHistoryResponse:
     scoped = bind_session_id(user.tenant_id, session_id)
@@ -122,7 +124,7 @@ async def get_session_history(
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_SESSION_WRITE)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> dict:
     """删除一条会话。

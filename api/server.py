@@ -66,6 +66,8 @@ from api.routes import auth_debug as auth_debug_routes
 from api.routes import auth_login as auth_login_routes
 from api.routes import billing as billing_routes
 from api.routes import downloads as download_routes
+from api.routes import ops_targets as ops_targets_routes
+from api.routes import me as me_routes
 from config.settings import get_settings
 from safety.http_rate_limit import init_http_rate_limiter, shutdown_http_rate_limiter
 
@@ -268,6 +270,7 @@ app.include_router(auth_login_routes.router)
 # 调试发 Token：仅 AUTH_DEBUG_ENABLED=true 时挂载
 if _settings.auth_debug_enabled:
     app.include_router(auth_debug_routes.router)
+app.include_router(me_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(sessions_routes.router)
 app.include_router(knowledge_routes.router)
@@ -277,6 +280,7 @@ app.include_router(qa_routes.router)
 app.include_router(sandbox_routes.router)
 app.include_router(ops_routes.router)
 app.include_router(ops_terminal_routes.router)
+app.include_router(ops_targets_routes.router)
 @app.get("/health/live", response_model=LiveHealthResponse, tags=["system"])
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health_live() -> LiveHealthResponse:

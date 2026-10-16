@@ -4,17 +4,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.auth.deps import AuthUser, get_current_user
+from api.auth.access_deps import require_perm
+from api.auth.deps import AuthUser
 from api.deps import get_agent_app
 from api.schemas import UsageResponse
 from application.services.agent_application import AgentApplication
+from domain.access import PERM_BILLING_ADMIN, PERM_BILLING_READ
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
 
 @router.get("/usage", response_model=UsageResponse)
 async def get_usage(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_BILLING_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> UsageResponse:
     return UsageResponse(
@@ -25,7 +27,7 @@ async def get_usage(
 
 @router.post("/flush")
 async def flush_usage(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_BILLING_ADMIN)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> dict:
     """把 Redis 脏租户刷进 MySQL usage_events / usage_daily。

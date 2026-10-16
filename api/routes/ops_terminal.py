@@ -37,8 +37,10 @@ from fastapi import (
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
+from api.auth.access_deps import require_perm
 from api.auth.deps import AuthUser, get_current_user
 from application.ops.rbac import can_open_terminal
+from domain.access import PERM_OPS_TERMINAL
 from application.ops.ttyd_manager import get_ttyd_manager
 from application.sandbox.service import SandboxApplication
 from config.settings import get_settings
@@ -96,7 +98,7 @@ class TerminalPublic(BaseModel):
 @router.post("/sessions", response_model=TerminalPublic)
 async def open_terminal(
     body: OpenTerminalBody,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_OPS_TERMINAL)),
 ):
     """登录用户打开一个交互终端。"""
     _require_ttyd()

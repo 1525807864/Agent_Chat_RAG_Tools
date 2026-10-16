@@ -35,6 +35,8 @@ def ensure_all_schemas() -> bool:
         root / "sql" / "p1_schema.sql",
         root / "sql" / "p2_schema.sql",
         root / "sql" / "p3_schema.sql",
+        root / "sql" / "p4_ops_targets.sql",
+        root / "sql" / "p5_access_jobs.sql",
     ]
     try:
         conn = _connect()
@@ -43,9 +45,12 @@ def ensure_all_schemas() -> bool:
         return False
 
     try:
+        applied: list[str] = []
+        missing: list[str] = []
         with conn.cursor() as cur:
             for path in files:
                 if not path.is_file():
+                    missing.append(path.name)
                     continue
                 sql = path.read_text(encoding="utf-8")
                 # 按分号拆语句；跳过空行与纯注释块
@@ -57,8 +62,11 @@ def ensure_all_schemas() -> bool:
                     ).strip()
                     if body:
                         cur.execute(body)
+                applied.append(path.name)
         conn.commit()
-        _log.info("MySQL P0/P1/P2/P3 schema 已就绪")
+        if missing:
+            _log.warning("MySQL schema 文件缺失（镜像未 COPY sql/？）: %s", missing)
+        _log.info("MySQL schema 已就绪 applied=%s", applied)
         return True
     except Exception as e:  # noqa: BLE001
         _log.warning("ensure_all_schemas 失败: %s", e)

@@ -6,7 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from api.auth.deps import AuthUser, get_current_user
+from api.auth.access_deps import require_perm
+from api.auth.deps import AuthUser
 from api.deps import get_agent_app
 from api.schemas import (
     BuildKBRequest,
@@ -16,9 +17,12 @@ from api.schemas import (
     GraphStatsResponse,
     KbJobResponse,
 )
-from application.jobs.kb_jobs import enqueue_kb_build, get_job
+from application.jobs.factory import get_job_service
+from application.jobs.service import JobError
 from application.services.agent_application import AgentApplication
 from application.tenancy import tenant_docs_dir
+from domain.access import PERM_KB_READ, PERM_KB_WRITE
+from domain.jobs import Job
 from shared.errors import AppError
 from utils.logger import get_logger
 
@@ -31,10 +35,25 @@ ALLOWED_UPLOAD_SUFFIXES = {
 #单文件上限:20MB,防止内存被撑爆
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
+
+def _kb_job_response(job: Job) -> KbJobResponse:
+    """领域 Job → 对外 KbJobResponse（兼容前端轮询字段）。"""
+    return KbJobResponse(
+        job_id=job.id,
+        tenant_id=job.tenant_id,
+        doc_dir=str((job.payload or {}).get("doc_dir") or ""),
+        status=job.status,
+        progress=job.progress,
+        message=job.message,
+        chunk_count=int((job.result or {}).get("chunk_count") or 0),
+        error=job.error,
+    )
+
+
 @router.post("/build", response_model=BuildKBResponse)
 async def build_knowledge_base(
     req: BuildKBRequest,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_KB_WRITE)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> BuildKBResponse:
     """同步建库（小语料）；大语料请用 /build/async。"""
@@ -86,13 +105,12 @@ async def build_knowledge_base(
 @router.post("/build/async", response_model=KbJobResponse)
 async def build_knowledge_base_async(
     req: BuildKBRequest,
-    user: AuthUser = Depends(get_current_user),
-    app: AgentApplication = Depends(get_agent_app),
+    user: AuthUser = Depends(require_perm(PERM_KB_WRITE)),
 ) -> KbJobResponse:
-    """异步建库：立即返回 job_id，轮询 GET /build/{job_id}。"""
+    """异步建库：入队后立即返回 job_id；由独立 Worker 消费。"""
     from shared.path_security import get_project_root
 
-    # 忽略客户端 doc_dir，只扫当前租户上传目录
+    _ = req  # 忽略客户端 doc_dir，只扫当前租户上传目录
     docs_root = tenant_docs_dir(get_project_root(), user.tenant_id)
     docs_root.mkdir(parents=True, exist_ok=True)
     try:
@@ -100,44 +118,34 @@ async def build_knowledge_base_async(
     except ValueError:
         raw_dir = str(docs_root)
 
-    job = await enqueue_kb_build(
-        app, tenant_id=user.tenant_id, doc_dir=raw_dir
-    )
-    return KbJobResponse(
-        job_id=job.id,
-        tenant_id=job.tenant_id,
-        doc_dir=job.doc_dir,
-        status=job.status,
-        progress=job.progress,
-        message=job.message,
-        chunk_count=job.chunk_count,
-        error=job.error,
-    )
+    try:
+        enq = get_job_service().enqueue_kb_build(
+            tenant_id=user.tenant_id,
+            user_id=user.user_id,
+            doc_dir=raw_dir,
+        )
+        job = get_job_service().get_for_tenant(enq.job_id, user.tenant_id)
+    except JobError as exc:
+        status = 429 if exc.code == "quota" else 400
+        raise HTTPException(status_code=status, detail=exc.message) from exc
+    return _kb_job_response(job)
 
 
 @router.get("/build/{job_id}", response_model=KbJobResponse)
 async def get_build_job(
     job_id: str,
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_KB_READ)),
 ) -> KbJobResponse:
-    job = get_job(job_id)
-    if not job or job.tenant_id != user.tenant_id:
-        raise HTTPException(status_code=404, detail="job not found")
-    return KbJobResponse(
-        job_id=job.id,
-        tenant_id=job.tenant_id,
-        doc_dir=job.doc_dir,
-        status=job.status,
-        progress=job.progress,
-        message=job.message,
-        chunk_count=job.chunk_count,
-        error=job.error,
-    )
+    try:
+        job = get_job_service().get_for_tenant(job_id, user.tenant_id)
+    except JobError as exc:
+        raise HTTPException(status_code=404, detail=exc.message) from exc
+    return _kb_job_response(job)
 
 
 @router.get("/docs", response_model=DocListResponse)
 async def list_docs(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_KB_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> DocListResponse:
     docs = [
@@ -148,7 +156,7 @@ async def list_docs(
 
 @router.post("/docs/upload")
 async def upload_doc(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_KB_WRITE)),
     file: UploadFile = File(...),  # multipart 字段名必须叫 file
 ) -> dict:
     """上传单个文档到当前租户的 docs 目录。"""
@@ -187,7 +195,7 @@ async def upload_doc(
 
 @router.get("/graph/stats", response_model=GraphStatsResponse)
 async def get_graph_stats(
-    user: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(require_perm(PERM_KB_READ)),
     app: AgentApplication = Depends(get_agent_app),
 ) -> GraphStatsResponse:
     try:
