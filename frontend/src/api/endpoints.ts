@@ -631,9 +631,11 @@ export function fetchOpsHealth() {
 
 /**
  * POST 发起调查。
+ * targetId：必填，对应已登记的客户项目。
  * conversation_history：把上一轮返回的 conversationHistory 原样带回，才能多轮。
  */
 export function postOpsAsk(body: {
+  targetId: string;
   message: string;
   conversation_history?: Record<string, unknown>[] | null;
   model?: string | null;
@@ -644,6 +646,7 @@ export function postOpsAsk(body: {
   return apiJson<OpsAskResult>("/api/ops/ask", {
     method: "POST",
     body: JSON.stringify({
+      targetId: body.targetId,
       message: body.message,
       conversation_history: body.conversation_history,
       model: body.model,
@@ -651,6 +654,45 @@ export function postOpsAsk(body: {
       sandboxSessionId: body.sandboxSessionId ?? null,
     }),
   });
+}
+
+/** GET 本租户运维目标（客户项目）列表 */
+export function fetchOpsTargets() {
+  return apiJson<{ items: import("../types/ops").OpsTarget[] }>("/api/ops/targets");
+}
+
+/** POST 登记客户项目；凭证只写不回读 */
+export function createOpsTarget(body: {
+  name: string;
+  targetType: string;
+  endpointBase?: string | null;
+  authToken?: string | null;
+  kubeconfig?: string | null;
+  defaultNamespace?: string | null;
+  notes?: string | null;
+  enabled?: boolean;
+}) {
+  return apiJson<import("../types/ops").OpsTarget>("/api/ops/targets", {
+    method: "POST",
+    body: JSON.stringify({
+      name: body.name,
+      targetType: body.targetType,
+      endpointBase: body.endpointBase ?? null,
+      authToken: body.authToken ?? null,
+      kubeconfig: body.kubeconfig ?? null,
+      defaultNamespace: body.defaultNamespace ?? null,
+      notes: body.notes ?? null,
+      enabled: body.enabled ?? true,
+    }),
+  });
+}
+
+/** DELETE 运维目标 */
+export function deleteOpsTarget(id: string) {
+  return apiJson<{ ok: boolean; id: string }>(
+    `/api/ops/targets/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
 }
 
 /** 打开交互终端（底层；一般用 openOpsTerminalWithApproval） */
