@@ -14,6 +14,32 @@ spec:
       labels:
         app: api
     spec:
+      # 复用本机已有的 mysql:8.0，避免再拉 busybox（Desktop 常 ImagePullBackOff）
+      initContainers:
+        - name: wait-mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: MYSQL_ROOT_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              echo "waiting for mysql to accept connections"
+              i=0
+              while ! mysqladmin ping -h mysql -uroot -p"$MYSQL_ROOT_PASSWORD" --silent; do
+                i=$((i+1))
+                if [ "$i" -gt 60 ]; then
+                  echo "timeout waiting for mysql"
+                  exit 1
+                fi
+                sleep 2
+              done
+              echo "mysql is ready"
       containers:
         - name: api
           # compose build 出来的本地镜像名；若你的不同，改这里
@@ -25,6 +51,7 @@ spec:
             # ---- 连集群内服务（名字=Service名）----
             - name: AUTH_ENABLED
               value: "true"
+            # Redis：会话记忆 / 限流 / 用量账本（chat + /api/ops/ask 共用 usage:tenant:*）
             - name: REDIS_URL
               value: "redis://redis:6379/0"
             - name: MEMORY_BACKEND
@@ -64,12 +91,22 @@ spec:
             - name: DEBUG
               value: "false"
             - name: ALLOW_REGISTER
-              value: "false"
+              value: "true"
             # ---- Holmes ----
             - name: HOLMES_ENABLED
               value: "true"
             - name: HOLMES_API_BASE
               value: "http://holmes:5050"
+            # 必须与 holmes Deployment 的 MODEL 一致（LiteLLM 可解析的 ID）
+            - name: HOLMES_DEFAULT_MODEL
+              value: "openai/deepseek-chat"
+            # 多客户 Ops Target 凭证加密；缺省时应用内回退用 JWT_SECRET 派生
+            - name: OPS_CREDENTIALS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: OPS_CREDENTIALS_KEY
+                  optional: true
             # ---- 第一期先关沙箱/终端（K8s 里别挂 docker.sock）----
             - name: SANDBOX_ENABLED
               value: "false"

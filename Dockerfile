@@ -19,25 +19,34 @@ RUN npm run build
 FROM python:3.12-slim AS api
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    gnupg \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-      https://download.docker.com/linux/debian bookworm stable" \
-      > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli \
-    && apt-get install -y --no-install-recommends ca-certificates curl python3 bsdutils \
-    && rm -rf /var/lib/apt/lists/*
-# ttyd：交互终端
+# 国内机：Debian / Docker CE 走阿里云镜像，避免 download.docker.com 被重置
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates gnupg; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://mirrors.aliyun.com/docker-ce/linux/debian bookworm stable" \
+      > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends docker-ce-cli; \
+    apt-get install -y --no-install-recommends ca-certificates curl python3 bsdutils; \
+    rm -rf /var/lib/apt/lists/*
+# ttyd：交互终端（GitHub 直连失败时走 ghproxy）
 ARG TTYD_VERSION=1.7.7
-RUN curl -fsSL -o /usr/local/bin/ttyd \
-      "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
-    && chmod +x /usr/local/bin/ttyd
+RUN set -eux; \
+    url="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"; \
+    curl -fsSL -o /usr/local/bin/ttyd "$url" \
+      || curl -fsSL -o /usr/local/bin/ttyd "https://ghproxy.net/$url" \
+      || curl -fsSL -o /usr/local/bin/ttyd "https://mirror.ghproxy.com/$url"; \
+    chmod +x /usr/local/bin/ttyd
 # 使用国内镜像进行加速构建镜像
 ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
     PIP_TRUSTED_HOST=mirrors.aliyun.com \
@@ -64,6 +73,9 @@ COPY utils/ ./utils/
 COPY domain/ ./domain/
 COPY orchestration/ ./orchestration/
 COPY e2e/ ./e2e/
+# 业务表 DDL（ensure_all_schemas 读 /app/sql/*.sql）
+COPY sql/ ./sql/
+COPY worker/ ./worker/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

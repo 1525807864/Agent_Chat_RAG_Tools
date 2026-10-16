@@ -103,12 +103,30 @@ curl.exe http://127.0.0.1:8080/health
 |------|------|------|
 | mysql Crash，日志含 `MYSQL_USER="root"` | 官方镜像禁止用 `MYSQL_USER` 配置 root | `20-mysql.yaml` 只保留 `MYSQL_ROOT_PASSWORD` + `MYSQL_DATABASE` |
 | holmes `HOLMES_PORT=tcp://...` ValueError | Service 名 `holmes` 注入 Docker-link 风格环境变量 | `enableServiceLinks: false` + `HOLMES_PORT=5050` |
+| Ops/Holmes 查不到 nodes/pods（Forbidden） | 默认跑在 `nexora:default`，无集群读权限 | 应用 `35-holmes-rbac.yaml`，Deployment 设 `serviceAccountName: holmes` |
+| `kubectl top` → Metrics API not available | 未装 metrics-server | Desktop 安装 metrics-server，必要时加 `--kubelet-insecure-tls` |
 | 浏览器打开 localhost 是 Welcome to nginx | WSL/本机 nginx 占 `127.0.0.1:80` | web Service 映射 **8080** |
 | `create secret` 报 duplicate / invalid key | `.env` 重复键或 `KEY ` 带空格 | 用 `deploy/k8s/env.k8s`，键名去空格、去重 |
 | Memory / 混合召回静默降级 | 未注入 `EMBEDDING_*` | `env.k8s` + `40-api.yaml` 已要求这三项 |
 | 日志里 AUTH_DEBUG / OpenAPI 警告 | 镜像默认偏松 | `40-api.yaml` 已显式 `AUTH_DEBUG_ENABLED=false`、`OPENAPI_ENABLED=false` |
+| Ops 调查后前端无 Token / billing 不涨 | 旧 api/nginx 镜像未含 ops 记账 | 重建 `api`+`nginx` 后 `rollout restart`；确认 `REDIS_URL` 指向集群 redis |
+| 登录 `Table users doesn't exist` | MySQL emptyDir 被清空，或 api 早于 mysql 就绪 | 新镜像会遇 1146 自动建表；`rollout restart deploy/api`；Secret 建议 `MYSQL_USER=root` 且密码=ROOT |
 
-### 改配置后滚动
+### 改代码后滚动（含 ops 用量）
+
+ops 把 Holmes 一轮记入与 chat 相同的 Redis 账本（`tenant_id`）。改 `api/routes/ops.py` 或前端 `OpsWorkspace` 后：
+
+```powershell
+cd D:\LangChain_Demo
+$env:SANDBOX_WORKSPACE_HOST="D:/LangChain_Demo/data/sandbox"
+docker compose build --pull=false api nginx
+kubectl apply -f deploy/k8s/
+kubectl -n nexora rollout restart deploy/api deploy/web
+kubectl -n nexora rollout status deploy/api
+kubectl -n nexora rollout status deploy/web
+```
+
+仅改 Secret / env：
 
 ```powershell
 kubectl -n nexora delete secret nexora-secret --ignore-not-found
