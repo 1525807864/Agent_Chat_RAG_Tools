@@ -42,8 +42,8 @@ services:
       OPENAI_API_BASE: ${DEEPSEEK_API_BASE:-https://api.deepseek.com/v1}
       # 若 Holmes 进程要开鉴权，与 HOLMES_API_KEY 保持一致
       HOLMES_API_KEY: ${HOLMES_API_KEY:-}
-      # 模型名按你 holmes 配置；没有 modelList 时可直接 openai/deepseek-*
-      MODEL: ${HOLMES_DEFAULT_MODEL:-deepseek}
+      # LiteLLM 需带前缀；裸名 deepseek 会 GetLLMProvider 报错
+      MODEL: ${HOLMES_DEFAULT_MODEL:-openai/deepseek-chat}
     # 官方镜像默认 ENTRYPOINT 是 CLI；覆盖成 HTTP 服务（端口以你镜像为准）
     # 若 robustadev/holmes 的启动方式不同，改成镜像文档里的 serve 命令
     command: ["python", "server.py"]

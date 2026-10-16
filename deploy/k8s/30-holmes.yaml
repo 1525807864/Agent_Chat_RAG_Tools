@@ -15,6 +15,8 @@ spec:
       labels:
         app: holmes
     spec:
+      # 专用 SA + ClusterRole（见 35-holmes-rbac.yaml）；勿用 default
+      serviceAccountName: holmes
       # Service 名 holmes 会注入 HOLMES_PORT=tcp://...，与应用期望的数字端口冲突
       enableServiceLinks: false
       containers:
@@ -26,7 +28,8 @@ spec:
           ports:
             - containerPort: 5050
           env:
-            # 和 Compose 一样：把 DeepSeek 钥塞给 OPENAI_*
+            # DeepSeek 走 OpenAI 兼容端点：LiteLLM 需 openai/<真实模型名>
+            # 裸名 deepseek 会触发 GetLLMProvider list index out of range
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -34,8 +37,14 @@ spec:
                   key: DEEPSEEK_API_KEY
             - name: OPENAI_API_BASE
               value: "https://api.deepseek.com/v1"
+            # 原生 deepseek/ 前缀时 LiteLLM 还会读这个
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nexora-secret
+                  key: DEEPSEEK_API_KEY
             - name: MODEL
-              value: "deepseek"
+              value: "openai/deepseek-chat"
             - name: HOLMES_PORT
               value: "5050"
             # 若 .env 有 HOLMES_API_KEY 再解开；没有就整段删掉

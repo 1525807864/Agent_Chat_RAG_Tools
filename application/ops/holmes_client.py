@@ -26,13 +26,27 @@ class HolmesError(Exception):
 class HolmesClient:
     """薄封装：ask() → Holmes /api/chat。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        base: str | None = None,
+        api_key: str | None = None,
+        default_model: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
         s = get_settings()
-        # 去掉尾斜杠，避免 //api/chat
-        self.base = (s.holmes_api_base or "").rstrip("/")
-        self.api_key = (s.holmes_api_key or "").strip()
-        self.default_model = (s.holmes_default_model or "").strip() or None
-        self.timeout = float(s.holmes_timeout_sec)
+        # 允许执行器传入[客户Agent/专用Holmes]地址 
+
+        self.base = (base if base is not None else s.holmes_api_base or "").rstrip("/") #去掉尾斜杠，避免 //api/chat
+        if api_key is None:
+            self.api_key = (s.holmes_api_key or "").strip()
+        else:
+            self.api_key = (api_key or "").strip()
+        
+        self.default_model = (
+            (default_model if default_model is not None else s.holmes_default_model) or ""
+        ).strip() or None
+        self.timeout = float(timeout if timeout is not None else s.holmes_timeout_sec)
 
     def _headers(self) -> dict[str, str]:
         """Holmes 可选鉴权：HOLMES_API_KEY 非空才带。"""

@@ -393,11 +393,11 @@ class Settings(BaseSettings):
         alias="HOLMES_API_KEY",
         description="调用 Holmes 时的 X-API-Key / Bearer",
     )
-    # 对应 Holmes modelList 键名（如 deepseek），或 openai/deepseek-chat
+    # LiteLLM 模型 ID（须带 provider 前缀）；裸名 deepseek 会 GetLLMProvider 失败
     holmes_default_model: str = Field(
-        default="deepseek",
+        default="openai/deepseek-chat",
         alias="HOLMES_DEFAULT_MODEL",
-        description="转发给 Holmes 的 model 字段",
+        description="转发给 Holmes 的 model 字段，如 openai/deepseek-chat",
     )
     # 单次调查可能很久（拉日志/指标），超时要够大
     holmes_timeout_sec: float = Field(
@@ -414,6 +414,12 @@ class Settings(BaseSettings):
         default=False,
         alias="OPS_TTYD_ENABLED",
         description="是否启用 Ops 交互终端（ttyd）",
+    )
+    # 多用户目标凭证加密密钥
+    ops_credentials_key: str = Field(
+        default="",
+        alias="OPS_CREDENTIALS_KEY",
+        description="Fernet key 或任意长口令；用于加密 ops_targets 里的 token/kubeconfig",
     )
     # ttyd 可执行文件路径；PATH 里有则写 ttyd 即可
     ops_ttyd_bin: str = Field(
@@ -593,7 +599,7 @@ class Settings(BaseSettings):
         description="true 时每次启动用 ADMIN_PASSWORD 覆盖管理员哈希",
     )
     allow_register: bool = Field(
-        default=False,
+        default=True,
         alias="ALLOW_REGISTER",
         description="是否开放 POST /api/auth/register",
     )

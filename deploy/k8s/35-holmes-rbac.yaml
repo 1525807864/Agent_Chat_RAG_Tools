@@ -1,0 +1,50 @@
+# Holmes 只读巡检权限（本机 Docker Desktop 够用；生产勿绑 cluster-admin）
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: holmes
+  namespace: nexora
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: holmes-reader
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+      - persistentvolumes
+      - services
+      - endpoints
+      - pods
+      - pods/log
+      - events
+      - configmaps
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  # kubectl top（需集群已装 metrics-server）
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: holmes-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: holmes-reader
+subjects:
+  - kind: ServiceAccount
+    name: holmes
+    namespace: nexora
