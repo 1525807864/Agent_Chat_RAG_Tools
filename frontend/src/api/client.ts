@@ -3,20 +3,34 @@
 // ============================================================================
 import { authHeaders } from "../auth/token";
 import { clearToken } from "../auth/token";
-// 解析后端根地址：Electron > .env > 默认 8020；并去掉末尾斜杠
+/** 是否为本地回环地址（生产站绝不能把请求打到用户本机 8020） */
+function isLoopbackBase(base: string): boolean {
+  return (
+    base.includes("127.0.0.1") ||
+    base.includes("localhost") ||
+    base.includes("[::1]")
+  );
+}
+
+// 解析后端根地址；网页生产环境默认同源（空 base → /api/...）
 function resolveApiBase(): string {
   const fromElectron = window.electronAPI?.apiBase?.replace(/\/$/, "");
-  const fromEnv = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(
-    /\/$/,
-    "",
-  );
-  // 桌面与网页共用云 API：Vite 里配的 VITE_API_BASE 优先，避免 preload 默认 127.0.0.1
-  if (fromEnv) return fromEnv;
-  if (fromElectron) return fromElectron;
-  // 网页由 Nginx 同源反代 /api；空 base 让 fetch("/api/...") 打到当前域名
+  const fromEnv = (import.meta.env.VITE_API_BASE as string | undefined)
+    ?.trim()
+    .replace(/\/$/, "");
+
+  // 浏览器网页：优先同源；仅当显式配置了非 loopback 的 VITE_API_BASE 才用
   if (typeof window !== "undefined" && !window.electronAPI) {
+    const pageHost = window.location.hostname;
+    const pageIsLocal = pageHost === "localhost" || pageHost === "127.0.0.1";
+    if (fromEnv && (!isLoopbackBase(fromEnv) || pageIsLocal)) {
+      return fromEnv;
+    }
     return "";
   }
+
+  if (fromEnv) return fromEnv;
+  if (fromElectron) return fromElectron;
   return "http://127.0.0.1:8020";
 }
 
@@ -69,7 +83,7 @@ export function handleUnauthorized(res: Response, path: string): boolean {
 export async function apiJson<T>(
   path: string, // 以 / 开头的路径
   init?: RequestInit, // 标准 fetch 选项
-): Promise<T> {
+): Promise<T> { 
   // 发起请求：Base + path
   const res = await fetch(`${API_BASE}${path}`, {
     // 展开调用方传入的 method/body/signal 等

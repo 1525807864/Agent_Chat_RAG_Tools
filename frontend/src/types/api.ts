@@ -175,7 +175,7 @@ export interface TurnUsage {
   requests?: number;
   model?: string;
 }
-
+/** 租户累计用量（与后端 TenantUsage.to_dict 对齐） */
 export interface TenantUsageDTO {
   requests: number;
   tokens_in: number;

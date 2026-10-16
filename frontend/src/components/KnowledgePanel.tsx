@@ -157,7 +157,7 @@ export function KnowledgePanel() {
           <strong>已上传文件（{docs.length}）</strong>
           <div className="kb-doc-list">
             {docs.length === 0 ? (
-              <div className="kb-doc-empty">（空）请先选择文件上传</div>
+              <div className="kb-doc-empty">请先选择文件上传</div>
             ) : (
               docs.map((d) => (
                 <div
