@@ -1,4 +1,8 @@
-# 本机 MySQL：用 emptyDir 存数据（删 Pod 数据会没，够本地测）
+# 本机 MySQL（第一期）
+# - 数据用 emptyDir：Pod 重建会清空库（users 表也没）
+# - API 已支持遇 1146 自动重建 users；仍建议改 Secret 后滚动 api
+# - Secret：MYSQL_USER=root 时 MYSQL_PASSWORD 必须等于 MYSQL_ROOT_PASSWORD
+# - 切勿在本 Deployment 设 MYSQL_USER=root（官方镜像会退出）
 # 生产请换成 RDS / PVC，别照搬 emptyDir
 apiVersion: apps/v1
 kind: Deployment
@@ -21,11 +25,10 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - "--character-set-server=utf8mb4"
-            - "--collation-server=utf8mb4_unicode_ci"
+            - "--collation-server=utf8mb4_bin"
           ports:
             - containerPort: 3306
           env:
-            # 密码从 Secret 读；键名要和你 --from-env-file=.env 里一致
             - name: TZ
               value: Asia/Shanghai
             - name: MYSQL_ROOT_PASSWORD
@@ -38,15 +41,27 @@ spec:
                 secretKeyRef:
                   name: nexora-secret
                   key: MYSQL_DATABASE
-            # 不要设 MYSQL_USER=root：官方镜像会直接退出。
-            # 本机 .env 里 MYSQL_USER=root 时，只用 ROOT_PASSWORD + DATABASE 即可。
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
           readinessProbe:
             exec:
-              command: ["mysqladmin", "ping", "-h", "127.0.0.1"]
-            initialDelaySeconds: 15
+              # 必须走 shell，才能展开 MYSQL_ROOT_PASSWORD
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 12
+          # 给官方镜像首次初始化留时间，避免 api 抢跑
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"
+            failureThreshold: 30
             periodSeconds: 5
       volumes:
         - name: data
